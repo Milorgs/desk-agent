@@ -10,6 +10,7 @@ import tempfile
 import uuid
 
 from .desktop import Desktop
+from .config import config_path
 
 
 def schema(name, description, properties):
@@ -53,6 +54,8 @@ class Tools:
         path = (self.root / value).resolve()
         if not path.is_relative_to(self.root):
             raise ValueError("文件工具只能访问工作目录内的路径。")
+        if path.is_relative_to(config_path().parent.resolve()):
+            raise ValueError("文件工具不访问 desk-agent 的模型配置和密钥。")
         parts = path.relative_to(self.root).parts
         if any(p in {".git", ".desk-agent", ".ssh", ".gnupg"} or p == ".env" or p.startswith(".env.") and p != ".env.example" for p in parts):
             raise ValueError("文件工具不访问凭据、Git 内部目录或本地备份。")

@@ -17,6 +17,21 @@ class Agent:
         self.messages = [{"role": "system", "content": SYSTEM + "\n工作目录：" + str(tools.root)}]
 
     def run(self, task):
+        try:
+            self._run(task)
+        finally:
+            # A cancelled batch must not leave unanswered tool calls in the next turn.
+            for i in range(len(self.messages) - 1, -1, -1):
+                message = self.messages[i]
+                if message["role"] == "assistant":
+                    answered = {m.get("tool_call_id") for m in self.messages[i + 1:] if m["role"] == "tool"}
+                    for call in message.get("tool_calls", []):
+                        if call["id"] not in answered:
+                            self.messages.append({"role": "tool", "tool_call_id": call["id"],
+                                                  "content": '{"error":"任务已中止，此操作未确认执行；继续前重新检查状态。"}'})
+                    break
+
+    def _run(self, task):
         self.messages.append({"role": "user", "content": task})
         failures = 0
         for step in range(1, self.max_steps + 1):
@@ -25,6 +40,8 @@ class Agent:
             calls = message.get("tool_calls") or []
             if not isinstance(calls, list) or len(calls) > 12:
                 raise ValueError("模型返回的工具调用数量无效。")
+            if any(not isinstance(c, dict) or not c.get("id") or not isinstance(c.get("function"), dict) for c in calls):
+                raise ValueError("模型返回了无效工具调用。")
             assistant = {"role": "assistant", "content": message.get("content")}
             if calls:
                 assistant["tool_calls"] = calls
