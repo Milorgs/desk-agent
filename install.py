@@ -52,7 +52,7 @@ def install(prefix, setup_path=False):
             print(f"命令目录已加入 {rc}，新开终端生效。")
         else:
             print(f"请将 {bindir} 加入 {shell} 的 PATH。")
-    print(f"安装完成：{launcher}\n输入 desk 开始；首次启动会引导配置 API。")
+    print(f"安装完成：{launcher}\n输入 desk 打开主菜单。")
     return launcher
 
 

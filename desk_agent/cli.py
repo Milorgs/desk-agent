@@ -18,6 +18,7 @@ from .tools import Tools
 
 HELP = '''直接输入需求，回车执行；可以接着追问。
 /help                 显示帮助
+/menu                 返回主菜单（保留当前对话）
 /new                  清空当前对话
 /status               查看模型、目录和工具状态
 /config               修改 API、模型与密钥（重置对话）
@@ -35,7 +36,7 @@ Ctrl+C 停止当前任务，Ctrl+D 退出。'''
 
 def parser():
     p = argparse.ArgumentParser(description="desk：输入一句话，操作你的 Linux 电脑")
-    p.add_argument("task", nargs="?", help="留空进入持续对话；或输入任务、doctor、config、inspect")
+    p.add_argument("task", nargs="?", help="留空打开主菜单；或输入任务、doctor、config、inspect")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--workspace", default=".", help="工作目录，默认当前目录")
     p.add_argument("--provider", help="本次使用指定的已保存服务商配置，不使用 DESK_* 环境变量覆盖")
@@ -66,6 +67,7 @@ def configure(profile=None, *, new=False):
         else:
             current = Config.load(profile, use_env=profile is None)
     print("\n配置模型 · 密钥输入不显示，保存在本机权限为 600 的文件中。")
+    print("  [1] OpenAI 兼容接口\n  [2] Anthropic 原生接口")
     protocol = input(f"接口类型 [{current.protocol}]（openai / anthropic）：").strip().lower() or current.protocol
     protocol = {"1": "openai", "2": "anthropic"}.get(protocol, protocol)
     if protocol not in {"openai", "anthropic"}:
@@ -133,7 +135,7 @@ def chat(agent, config, tools, args):
     except ImportError:
         pass
     status(config, tools, args)
-    print("\n输入需求开始，/help 查看帮助，/exit 退出。\n任务和工具结果会发送到你配置的 API。")
+    print("\n输入需求开始，/menu 返回主菜单，/help 查看帮助，/exit 退出。\n任务和工具结果会发送到你配置的 API。")
     while True:
         try:
             task = input("\n› ").strip()
@@ -141,6 +143,8 @@ def chat(agent, config, tools, args):
                 continue
             if task in {"/exit", "/quit"}:
                 break
+            if task == "/menu":
+                return agent, config, tools
             if task == "/help":
                 print(HELP)
             elif task == "/status":
@@ -224,6 +228,84 @@ def chat(agent, config, tools, args):
     print("再见。")
 
 
+def select_model():
+    active, profiles = Config.profiles()
+    if not profiles:
+        print("尚未保存模型，请在主菜单选择 [3] 添加模型。")
+        return None
+    names = list(profiles)
+    print("\n选择已保存的模型：")
+    for index, name in enumerate(names, 1):
+        entry = profiles[name]
+        current = " · 当前" if name == active else ""
+        print(f"  [{index}] {name} / {entry['model']} ({entry.get('protocol', 'openai')}){current}")
+    print("  [0] 返回")
+    while True:
+        choice = input("选择编号：").strip()
+        if choice in {"", "0"}:
+            return None
+        if choice.isascii() and choice.isdigit() and 1 <= int(choice) <= len(names):
+            return Config.activate(names[int(choice) - 1])
+        print("请输入列表中的编号，或输入 0 返回。")
+
+
+def menu(args, tools):
+    config, agent = None, None
+    try:
+        loaded = Config.load(args.provider, use_env=args.provider is None)
+        loaded.validate()
+        config = loaded
+    except (ValueError, OSError) as exc:
+        if args.provider:
+            print(f"未能选用指定模型：{exc}")
+    while True:
+        try:
+            print(f"\n  desk {__version__}")
+            print(f"  当前模型：{config.profile} / {config.model}" if config else "  当前模型：未配置")
+            print("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [0] 退出")
+            choice = input("\n请选择 [1]：").strip() or "1"
+            if choice in {"0", "/exit", "/quit"}:
+                print("再见。")
+                return 0
+            if choice == "1":
+                if config is None:
+                    print("请先选择 [3] 添加模型，或选择 [2] 选用已保存的模型。")
+                    continue
+                if agent is None:
+                    agent = Agent(ChatClient(config), tools, max_steps=args.max_steps)
+                state = chat(agent, config, tools, args)
+                if state is None:
+                    return 0
+                agent, config, tools = state
+            elif choice == "2":
+                selected = select_model()
+                if selected:
+                    config, agent = selected, None
+                    tools.desktop.refs.clear()
+                    print(f"已选用 {config.profile} / {config.model}，下一次对话将使用该模型。")
+            elif choice == "3":
+                profiles = Config.profiles()[1]
+                number = 1
+                while f"model-{number}" in profiles:
+                    number += 1
+                name = input(f"模型配置名称 [model-{number}]（输入 0 返回）：").strip()
+                if name == "0":
+                    continue
+                selected = configure(name or f"model-{number}", new=True)
+                config, agent = selected, None
+                tools.desktop.refs.clear()
+                print(f"已添加并选用 {config.profile} / {config.model}。")
+            else:
+                print("请输入 1、2、3 或 0。")
+        except EOFError:
+            print("\n再见。")
+            return 0
+        except KeyboardInterrupt:
+            print("\n已取消，返回主菜单。")
+        except (RuntimeError, ValueError, OSError) as exc:
+            print("错误：" + str(exc), file=sys.stderr)
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
@@ -246,6 +328,8 @@ def main(argv=None):
         if args.task == "inspect":
             print(json.dumps(tools.desktop.snapshot(args.app), ensure_ascii=False, indent=2))
             return 0
+        if args.task is None and sys.stdin.isatty():
+            return menu(args, tools)
         config = Config.load(args.provider, use_env=args.provider is None)
         try:
             config.validate()

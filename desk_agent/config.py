@@ -61,8 +61,8 @@ def write_store(active, profiles, keys):
 
 
 def check_profile_name(name):
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", name):
-        raise ValueError("服务商配置名请用 1–40 位字母、数字、短横线或下划线。")
+    if not re.fullmatch(r"[\w-]{1,40}", name):
+        raise ValueError("模型配置名请用 1–40 位中文、字母、数字、短横线或下划线，不含空格。")
 
 
 def normalize_url(value, protocol="openai"):
