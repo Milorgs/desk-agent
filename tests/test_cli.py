@@ -88,7 +88,7 @@ class CliTests(unittest.TestCase):
         prefix = self.root / "prefix with spaces"
         subprocess.run([sys.executable, str(source / "install.py"), "--prefix", str(prefix)], check=True, capture_output=True)
         result = subprocess.run([str(prefix / "bin/desk"), "--version"], cwd="/tmp", check=True, capture_output=True, text=True)
-        self.assertEqual(result.stdout.strip(), "0.2.0")
+        self.assertEqual(result.stdout.strip(), "0.3.0")
         self.assertFalse((self.root / ".bashrc").exists())
 
 
