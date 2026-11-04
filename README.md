@@ -4,7 +4,7 @@
 
 独立实现模型工具循环、文件工具、命令执行和 AT-SPI 桌面适配，不依赖或复制 agent-desktop。使用 Python 标准库；桌面功能额外使用系统提供的 PyGObject / AT-SPI。
 
-**状态：v0.3.0。** 已通过本地自动测试和模拟 API 的完整工具调用流程；尚未使用真实模型 API 或真实桌面应用完成端到端验收。
+**状态：v0.4.0。** 已通过本地自动测试和模拟 API 的完整工具调用流程；尚未使用真实模型 API 或真实桌面应用完成端到端验收。
 
 ## 安装一次，之后直接用 desk
 
@@ -20,7 +20,7 @@ python3 install.py --setup-path
 desk
 ```
 
-首次启动引导填写 API 地址、模型名称和 API Key。密钥输入不显示，保存在本机用户配置目录；下次启动直接进入持续对话，无需 export 环境变量，也不需要进入项目文件夹。
+首次启动引导选择接口类型（openai / anthropic），填写 API 地址、模型名称和 API Key。密钥输入不显示，保存在本机用户配置目录；下次启动直接进入持续对话，无需 export 环境变量，也不需要进入项目文件夹。
 
 安装器把程序复制到 `~/.local/share/desk-agent/releases/`，并创建 `~/.local/bin/desk`。`--setup-path` 在必要时将命令目录追加到 Bash/Zsh 配置，其他 Shell 需自行加入 PATH。更新源码后重新运行安装器更新本机版本。
 
@@ -30,7 +30,7 @@ desk
 
 ```text
 $ desk
-  desk 0.3.0 · 你配置的模型
+  desk 0.4.0 · 你配置的模型
   当前工作目录
 
 › 看看这个目录里有什么
@@ -60,7 +60,14 @@ $ desk
 
 ## 模型配置
 
-使用支持工具调用的 **OpenAI-compatible Chat Completions API**，请求地址为 `BASE_URL/chat/completions`。本版不支持 Responses API、流式输出、纯文字模型的指令解析或图像输入。
+支持两种接口，按服务商实际协议选择：
+
+| 接口类型 | 协议 | 请求地址 |
+|---|---|---|
+| `openai` | OpenAI-compatible Chat Completions | `BASE_URL/chat/completions` |
+| `anthropic` | Anthropic 原生 Messages | `BASE_URL/messages` |
+
+均要求模型支持工具调用。本版不支持 OpenAI Responses API、流式输出、纯文字模型的指令解析或图像输入。
 
 日后可运行 `desk config`，或在对话内输入 `/config` 修改配置。
 
@@ -89,19 +96,44 @@ $ desk
 
 `/model` 通过该服务商的 `GET /models` 获取列表；不支持模型列表的服务商可手动输入模型名称。模型出现在列表中不代表一定支持工具调用，可用 `/test` 检查。
 
-每套配置独立保存地址、密钥和默认模型。切换服务商或模型会清空当前会话上下文；不会把上一家的历史对话发到下一家。最近一次切换的服务商会成为下次启动的默认项。请求失败不会自动切换到其他服务商。
+每套配置独立保存接口类型、地址、密钥和默认模型。切换服务商或模型会清空当前会话上下文；不会把上一家的历史对话发到下一家。最近一次切换的服务商会成为下次启动的默认项。请求失败不会自动切换到其他服务商。
 
-也可从终端指定单次使用的配置：`desk --provider primary`。该参数不改变已保存的默认项，且忽略 `DESK_*` 环境覆盖。普通启动时仍支持 `DESK_BASE_URL`、`DESK_MODEL`、`DESK_API_KEY` 环境变量覆盖；`.env` 文件不会自动加载。
+也可从终端指定单次使用的配置：`desk --provider primary`。该参数不改变已保存的默认项，且忽略 `DESK_*` 环境覆盖。普通启动时仍支持 `DESK_BASE_URL`、`DESK_MODEL`、`DESK_API_KEY`、`DESK_API_TYPE` 环境变量覆盖；`.env` 文件不会自动加载。
 
 地址和模型保存在 `$XDG_CONFIG_HOME/desk-agent/config.toml` 的 profiles 中，密钥按配置名保存在同目录 `auth.json`；默认目录为 `~/.config/desk-agent/`。两份文件权限均为 600，密钥是本机明文文件，不是系统钥匙串。不要上传这两个文件。旧版单服务商配置读为 `default`，后续成功保存时迁移，不丢失原密钥。
 
-配置地址可填写 Base URL，或完整 `/chat/completions` 地址；程序会避免重复追加路径。远程 API 要求 HTTPS，仅 localhost/127.0.0.1/::1 允许 HTTP，禁止 HTTP 重定向。修改 API 主机时必须重新输入密钥，避免沿用另一家服务的密钥。
+配置地址可填写 Base URL，或与接口类型对应的完整 `/chat/completions`、`/messages` 地址；程序会避免重复追加路径。Anthropic 地址只填主机时会补上 `/v1`，自定义代理路径会保留。远程 API 要求 HTTPS，仅 localhost/127.0.0.1/::1 允许 HTTP，禁止 HTTP 重定向。修改 API 主机时必须重新输入密钥，避免沿用另一家服务的密钥。
 
-当前多服务商支持的前提是兼容 **Chat Completions** 协议；不支持 Anthropic 原生 Messages 或 OpenAI Responses 协议。
+### Anthropic 原生接口配置
+
+在 desk 对话里输入：
+
+```text
+/provider add claude
+```
+
+按向导填写：
+
+```text
+接口类型：anthropic
+API 地址：https://api.anthropic.com/v1
+模型名称：填写你的账号可用的 Claude 模型 ID
+API Key：输入 Anthropic 密钥
+```
+
+然后执行 `/model` 获取可用模型，或 `/test` 检查连接和工具调用。第三方代理如果提供 Anthropic 原生协议，也可选择 `anthropic`，填写其真实 Base URL；不要仅凭模型名称判断协议。
+
+原生适配使用 `x-api-key` 和 `anthropic-version` 请求头，转换 `input_schema`、`tool_use`、`tool_result`，将一轮多个工具结果合并到紧随其后的 user 消息，并按原样保留工具续接所需的 signed thinking 内容块；这些内容不会显示为终端回答。权限确认和本地工具与 OpenAI 接口共用。
+
+Anthropic 配置默认 `max_tokens = 4096`，API 版本固定为仍受支持的 `2023-06-01`，以便兼容现有原生代理。可在对应 TOML profile 下修改 `max_tokens`（1–65536，具体模型上限以服务商为准）和 `anthropic_version`（例如 `2026-10-21`）；切换模型会保留这些设置。此次不支持云平台 IAM、OAuth、组织级密钥所需的 workspace header、服务端工具、流式或自定义 thinking 参数。
+
+`/test` 在 Anthropic 接口下用 auto 工具选择，避免强制工具调用与部分模型设置不兼容；只有实际收到测试工具调用才报告工具能力验证成功。
+
+参考：[Messages API](https://platform.claude.com/docs/en/api/messages/create)、[工具结果格式](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[认证](https://platform.claude.com/docs/en/api/overview)、[API 版本](https://platform.claude.com/docs/en/api/versioning)。
 
 ### 请求失败时
 
-401、403、404 等错误会分别提示密钥、权限和地址/模型问题；不会回显服务商的原始错误正文。HTTP 429、500、502、503、504 最多重试两次，并显示等待提示；只重试模型请求，不重新执行本地工具。网络超时或连接异常不自动重试，避免不明确的重复提交。重试仍可能产生额外模型用量。
+401、403、404 等错误会分别提示密钥、权限和地址/模型问题；不会回显服务商的原始错误正文。HTTP 429、500、502、503、504、529 最多重试两次，并显示等待提示；只重试模型请求，不重新执行本地工具。网络超时或连接异常不自动重试，避免不明确的重复提交。重试仍可能产生额外模型用量。
 
 `/test` 只发送一条合成测试请求和一个无副作用的测试工具定义，不发送当前会话、文件或桌面内容，不实际调用本地工具。收到普通文本响应时只报告请求成功，不能据此宣称支持工具调用。
 
@@ -137,7 +169,7 @@ desk --allow-desktop \
 
 ## 当前能力与边界
 
-| 能力 | v0.3.0 |
+| 能力 | v0.4.0 |
 |---|---|
 | 文件读取、目录列举 | 工作目录内；UTF-8 文件最多 64 KB；单次目录最多 200 项 |
 | 文件编辑 | SHA256 冲突检测、原子替换、原文件备份 |
@@ -168,7 +200,7 @@ python3 -m unittest discover -s tests -v
 python3 -m desk_agent doctor
 ```
 
-自动测试覆盖文件写入/备份、并发编辑冲突、路径限制、用户拒绝、Shell 返回与超时、步数上限和本地模拟 HTTP API 的“生成工具调用 → 写入文件 → 读取验证”流程。另有首次启动引导、配置权限、持续对话、会话中断与独立安装器测试。模拟服务不代表真实模型能力。GitHub Actions 配置为 Python 3.11、3.14 运行测试。
+自动测试覆盖文件写入/备份、并发编辑冲突、路径限制、用户拒绝、Shell 返回与超时、步数上限和本地模拟 HTTP API 的“生成工具调用 → 写入文件 → 读取验证”流程。另有首次启动引导、配置权限、持续对话、会话中断与独立安装器测试。Anthropic 测试覆盖原生认证和消息转换、完整文件工具循环、多个结果合并、signed thinking 保留、截断/拒绝保护、模型切换保留接口设置。模拟服务不代表真实模型能力。GitHub Actions 配置为 Python 3.11、3.14 运行测试。
 
 ## 开发结构
 
@@ -176,7 +208,8 @@ python3 -m desk_agent doctor
 desk_agent/
   cli.py       持续对话、首次引导、斜杠命令、操作确认、可选记录
   config.py    私有模型配置、密钥保存与地址检查
-  api.py       Chat Completions HTTP 传输
+  api.py       共用 HTTP 传输与双协议调用
+  anthropic.py 原生 Messages 请求、响应和工具结果适配
   agent.py     模型与工具执行循环
   tools.py     文件、命令工具与调用校验
   desktop.py   自行实现的 AT-SPI 适配

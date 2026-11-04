@@ -54,3 +54,18 @@
 - 新增独立密钥、旧配置迁移、跨服务商会话隔离、切换模型持久化、最小连接测试和 HTTP 错误场景测试。
 
 仍使用本地模拟服务验证 HTTP 协议，没有读取或使用用户的真实密钥，也未声称完成实际服务商联调。
+
+
+## 2026-11-04 · v0.4.0
+
+用户进一步提出 Anthropic 接口支持。本轮直接适配原生 Messages API，不要求服务商转换成 OpenAI 格式：
+
+- 每套 provider 增加 protocol，支持 openai / anthropic；旧配置缺省仍为 openai。
+- 配置向导选择接口，状态显示实际协议，模型切换保留协议、生成上限和 API 版本。
+- 原生认证请求头、顶层 system、工具 input_schema、tool_use/tool_result，以及同轮多个工具结果的合并。
+- 工具续接时原样保留 thinking/redacted_thinking 内容块及签名，不显示为终端回答。
+- 原生模型列表及无副作用连接测试。Anthropic 使用 auto 工具选择，不强制依赖部分模型不支持的 forced tool choice。
+- 拒绝、截断、无效工具参数或未知内容块均在本地工具执行前停止。
+- 版本 header 默认固定 2023-06-01，允许配置覆盖；参考官方版本历史确认其仍受支持。
+
+本地共 37 项自动测试通过，包括模拟 Anthropic HTTP 服务的真实文件创建/读取循环。尚未使用真实 Anthropic API Key 联调，不宣称第三方代理均可兼容。

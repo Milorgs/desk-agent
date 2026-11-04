@@ -45,7 +45,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_domain_change_requires_new_key_without_losing_existing_config(self):
         Config("https://one.example/v1", "model-one", "key-one").save()
-        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["https://two.example/v1", "model-two"]), patch(
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["", "https://two.example/v1", "model-two"]), patch(
             "getpass.getpass", return_value=""
         ), redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
             configure()
