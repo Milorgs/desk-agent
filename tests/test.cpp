@@ -49,6 +49,15 @@ static J *args(const char *path){
     put(v,"path",str(path));
     return v;
 }
+static void test_utf8(void){
+    CHECK(valid_utf8("中文 English 😀"));
+    CHECK(valid_utf8(""));
+    CHECK(!valid_utf8("\xc0\xaf"));
+    CHECK(!valid_utf8("\xed\xa0\x80"));
+    CHECK(!valid_utf8("\xf4\x90\x80\x80"));
+    CHECK(!valid_utf8("\xe4\xb8"));
+    CHECK(!valid_utf8("\x80"));
+}
 static void test_files(void){
     App a=fresh();
     J *v=args("你好.txt");
@@ -456,6 +465,7 @@ static int workflow(App *a,const std::vector<std::string> &replies){
     a->config=config("test","openai");
     pid_t child=fake_server(a,responses.data(),static_cast<int>(responses.size()));
     int result=run_task(a,"完成任务并检查实际结果");
+    if(result)fprintf(stderr,"Workflow stopped: %s\n",a->error);
     server_done(child);
     return result;
 }
@@ -468,7 +478,7 @@ static void test_edit_workflow(void){
     put(search,"query",str("旧内容"));
     J *edit=args("welcome.txt");
     put(edit,"old_text",str("旧内容"));
-    put(edit,"new_text",str("新的欢迎语"));
+    put(edit,"new_text",str("新的欢迎语 😀"));
     put(edit,"expected_sha256",str(hash));
     free(hash);
     CHECK(!workflow(&a,{
@@ -481,7 +491,7 @@ static void test_edit_workflow(void){
     JsonPtr request(capture(&a,4));
     J *messages=get(get(request.get(),"body"),"messages");
     const char *result=sget(at(messages,alen(messages)-1),"content");
-    CHECK(strstr(result,"新的欢迎语")&&strstr(result,"保留这行"));
+    CHECK(strstr(result,"新的欢迎语 😀")&&strstr(result,"保留这行"));
     request.reset(capture(&a,3));
     messages=get(get(request.get(),"body"),"messages");
     JsonPtr written(json_tokener_parse(sget(at(messages,alen(messages)-1),"content")));
@@ -685,6 +695,7 @@ int main(void){
     char directory[]="/tmp/desk-c-test-XXXXXX";
     CHECK(mkdtemp(directory));
     strcpy(sandbox,directory);
+    test_utf8();
     test_files();
     test_search_and_edit();
     test_config();

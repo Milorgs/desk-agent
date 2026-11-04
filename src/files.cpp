@@ -78,17 +78,7 @@ int resolve_file(App *a,const char *path,char out[PATH_MAX]){
     return 0;
 }
 static bool utf8_text(const char *bytes,size_t n){
-    if(memchr(bytes,0,n))return false;
-    struct json_tokener *tok=json_tokener_new();
-    json_tokener_set_flags(tok,JSON_TOKENER_VALIDATE_UTF8);
-    J *value=json_object_new_string_len(bytes,(int)n);
-    const char *serialized=json_object_to_json_string_ext(value,JSON_C_TO_STRING_PLAIN);
-    J *parsed=json_tokener_parse_ex(tok,serialized,(int)strlen(serialized));
-    bool valid=json_tokener_get_error(tok)==json_tokener_success;
-    json_object_put(parsed);
-    json_tokener_free(tok);
-    json_object_put(value);
-    return valid;
+    return !memchr(bytes,0,n)&&valid_utf8(std::string_view(bytes,n));
 }
 static J *file_read(App *a,const char *path){
     char full[PATH_MAX];

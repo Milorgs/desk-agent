@@ -39,6 +39,20 @@ bool tool_failed(J *r){
     J *accepted=get(r,"accepted");
     return get(r,"error")||bget(r,"denied")||bget(r,"timed_out")||iget(r,"exit_code",0)!=0||(accepted&&!json_object_get_boolean(accepted));
 }
+bool valid_utf8(std::string_view text) noexcept {
+    for(size_t i=0;i<text.size();){
+        auto c=static_cast<unsigned char>(text[i]);
+        size_t width=c<0x80?1:(c>=0xc2&&c<=0xdf)?2:(c>=0xe0&&c<=0xef)?3:(c>=0xf0&&c<=0xf4)?4:0;
+        if(!width||width>text.size()-i)return false;
+        for(size_t k=1;k<width;k++)if((static_cast<unsigned char>(text[i+k])&0xc0)!=0x80)return false;
+        if(width>=3){
+            auto next=static_cast<unsigned char>(text[i+1]);
+            if((c==0xe0&&next<0xa0)||(c==0xed&&next>=0xa0)||(c==0xf0&&next<0x90)||(c==0xf4&&next>=0x90))return false;
+        }
+        i+=width;
+    }
+    return true;
+}
 void put(J *j,const char *key,J *v){
     json_object_object_add(j,key,v);
 }

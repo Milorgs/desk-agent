@@ -85,6 +85,10 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
             return NULL;
         }
         if(status>=200&&status<300){
+            if(!valid_utf8(b.data)){
+                seterr(a,"API 返回的文本不是有效 UTF-8。");
+                return nullptr;
+            }
             J *data=b.data.empty()?nullptr:json_tokener_parse(b.data.c_str());
             if(!data||!json_object_is_type(data,json_type_object)){
                 json_object_put(data);

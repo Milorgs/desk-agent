@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #define VERSION "1.1.0"
 #define CONTEXT_LIMIT 128000
@@ -42,6 +43,7 @@ J *at(J *j,size_t index);
 int iget(J *j,const char *key,int fallback);
 bool bget(J *j,const char *key);
 bool tool_failed(J *result);
+bool valid_utf8(std::string_view text) noexcept;
 void put(J *j,const char *key,J *value);
 void add(J *j,J *value);
 J *err(const char *message);

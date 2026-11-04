@@ -65,14 +65,33 @@ J *context(App *a,J *tools){
     return selected;
 }
 static J *arguments(const char *text){
-    struct json_tokener *tok=json_tokener_new();
-    json_tokener_set_flags(tok,JSON_TOKENER_STRICT|JSON_TOKENER_VALIDATE_UTF8);
     size_t length=strlen(text);
-    if(length>CONTEXT_LIMIT){json_tokener_free(tok);return NULL;}
-    J *args=json_tokener_parse_ex(tok,text,(int)length+1);
+    if(length>CONTEXT_LIMIT||!valid_utf8(std::string_view(text,length)))return nullptr;
+    // json-c 0.18's STRICT string check treats non-ASCII signed chars as
+    // controls. Feed it equivalent Unicode escapes while keeping strict JSON.
+    std::string portable;
+    portable.reserve(length);
+    auto unit=[&](uint32_t code){
+        constexpr char hex[]="0123456789abcdef";
+        portable+="\\u";
+        for(int shift=12;shift>=0;shift-=4)portable+=hex[(code>>shift)&0xf];
+    };
+    for(size_t i=0;i<length;){
+        auto c=static_cast<unsigned char>(text[i]);
+        if(c<0x80){portable+=text[i++];continue;}
+        size_t width=c<0xe0?2:c<0xf0?3:4;
+        uint32_t code=c&((1u<<(7-width))-1);
+        for(size_t k=1;k<width;k++)code=(code<<6)|(static_cast<unsigned char>(text[i+k])&0x3f);
+        if(code<=0xffff)unit(code);
+        else {code-=0x10000;unit(0xd800+(code>>10));unit(0xdc00+(code&0x3ff));}
+        i+=width;
+    }
+    struct json_tokener *tok=json_tokener_new();
+    json_tokener_set_flags(tok,JSON_TOKENER_STRICT);
+    J *args=json_tokener_parse_ex(tok,portable.c_str(),static_cast<int>(portable.size())+1);
     bool valid=json_tokener_get_error(tok)==json_tokener_success&&json_object_is_type(args,json_type_object);
     size_t end=json_tokener_get_parse_end(tok);
-    for(size_t i=end;i<length;i++)if(!isspace((unsigned char)text[i]))valid=false;
+    for(size_t i=end;i<portable.size();i++)if(!isspace(static_cast<unsigned char>(portable[i])))valid=false;
     json_tokener_free(tok);
     if(!valid){json_object_put(args);return NULL;}
     return args;
