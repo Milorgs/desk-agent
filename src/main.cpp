@@ -321,7 +321,7 @@ static int run_cli(int argc,char **argv){
         else if(!strcmp(arg,"--allow-shell"))a.shell=true;
         else if(!strcmp(arg,"--allow-desktop"))a.desktop=true;
         else if(!strcmp(arg,"--record"))a.record=true;
-        else if(!strcmp(arg,"--workspace")||!strcmp(arg,"--provider")||!strcmp(arg,"--app")||!strcmp(arg,"--max-steps")||!strcmp(arg,"--shell-backend")){
+        else if(!strcmp(arg,"--workspace")||!strcmp(arg,"--provider")||!strcmp(arg,"--app")||!strcmp(arg,"--max-steps")){
             if(i+1>=argc){
                 rc=2;
                 fprintf(stderr,"选项缺少参数。\n");
@@ -331,13 +331,6 @@ static int run_cli(int argc,char **argv){
             if(!strcmp(arg,"--workspace"))workspace=v;
             else if(!strcmp(arg,"--provider"))profile=v;
             else if(!strcmp(arg,"--app"))app=v;
-            else if(!strcmp(arg,"--shell-backend")){
-                if(strcmp(v,"c")){
-                    fprintf(stderr,"不支持该后端选项，请省略 --shell-backend。\n");
-                    rc=2;
-                    goto cleanup;
-                }
-            }
             else{
                 char *end;
                 long n=strtol(v,&end,10);
