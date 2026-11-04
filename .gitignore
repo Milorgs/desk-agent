@@ -8,4 +8,5 @@ dist/
 .env.*
 !.env.example
 .desk-agent/
+desk_agent/_native/
 *.local.toml

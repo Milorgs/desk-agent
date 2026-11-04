@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -13,7 +14,7 @@ import uuid
 MARKER = "# desk-agent managed launcher"
 
 
-def install(prefix, setup_path=False):
+def install(prefix, setup_path=False, with_native=False):
     if sys.version_info < (3, 11):
         raise RuntimeError("需要 Python 3.11 或更新版本。")
     source = Path(__file__).resolve().parent
@@ -24,7 +25,10 @@ def install(prefix, setup_path=False):
         raise RuntimeError(f"已有其他 desk 命令，未覆盖：{launcher}")
     app = prefix / "share/desk-agent/releases" / uuid.uuid4().hex
     app.mkdir(parents=True)
-    shutil.copytree(source / "desk_agent", app / "desk_agent", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(source / "desk_agent", app / "desk_agent", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "_native"))
+    if with_native:
+        from native.build import build
+        build(app / "desk_agent/_native/desk-runner")
     bindir.mkdir(parents=True, exist_ok=True)
     # A shell launcher avoids shebang path-length and space limitations.
     script = ("#!/bin/sh\n" + MARKER + "\nexec " + shlex.quote(sys.executable)
@@ -60,10 +64,11 @@ def main():
     p = argparse.ArgumentParser(description="安装 desk 命令到用户目录，无需 pip 或管理员权限")
     p.add_argument("--prefix", default=str(Path.home() / ".local"))
     p.add_argument("--setup-path", action="store_true", help="必要时将命令目录加入 Bash/Zsh 配置")
+    p.add_argument("--with-native", action="store_true", help="构建并安装可选 C 命令后端，需要 cc")
     args = p.parse_args()
     try:
-        install(args.prefix, args.setup_path)
-    except (OSError, RuntimeError) as exc:
+        install(args.prefix, args.setup_path, args.with_native)
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         p.exit(1, str(exc) + "\n")
 
 

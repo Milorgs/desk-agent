@@ -1,0 +1,10 @@
+{
+  "platform": "Linux x86_64",
+  "command": "true",
+  "samples_per_backend": 30,
+  "median_ms": {
+    "python": 2.165,
+    "c": 1.882
+  },
+  "note": "Measured locally during v0.6.0 development. Includes process startup; excludes compilation, API requests and desktop operations. Not a general performance claim."
+}
