@@ -35,15 +35,15 @@ class CliTests(unittest.TestCase):
         tools = Tools(self.root, lambda _: True)
         self.assertIn("error", tools.call("read_file", {"path": str(auth_path())}))
 
-    def test_first_run_wizard_saves_once_and_starts_chat(self):
+    def test_first_run_menu_saves_once_and_starts_chat(self):
         output = io.StringIO()
         with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=[
-            "", "https://example.com/v1", "my-model", "/exit"
+            "3", "default", "", "https://example.com/v1", "my-model", "1", "/exit"
         ]), patch("getpass.getpass", return_value="private-test-key"), redirect_stdout(output):
             self.assertEqual(main(["--workspace", str(self.root)]), 0)
         self.assertEqual(Config.load().model, "my-model")
         self.assertNotIn("private-test-key", output.getvalue())
-        with patch("builtins.input", side_effect=["/exit"]), patch("getpass.getpass") as ask_key, redirect_stdout(io.StringIO()):
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["0"]), patch("getpass.getpass") as ask_key, redirect_stdout(io.StringIO()):
             self.assertEqual(main(["--workspace", str(self.root)]), 0)
         ask_key.assert_not_called()
 
@@ -88,7 +88,7 @@ class CliTests(unittest.TestCase):
         prefix = self.root / "prefix with spaces"
         subprocess.run([sys.executable, str(source / "install.py"), "--prefix", str(prefix)], check=True, capture_output=True)
         result = subprocess.run([str(prefix / "bin/desk"), "--version"], cwd="/tmp", check=True, capture_output=True, text=True)
-        self.assertEqual(result.stdout.strip(), "0.4.0")
+        self.assertEqual(result.stdout.strip(), "0.5.0")
         self.assertFalse((self.root / ".bashrc").exists())
 
 
