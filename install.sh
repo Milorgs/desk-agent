@@ -17,7 +17,7 @@ if [ -e "$prefix/bin/desk" ] || [ -L "$prefix/bin/desk" ]; then
     if [ -L "$prefix/bin/desk" ]; then
         echo '已有 desk 符号链接，未覆盖。' >&2; exit 1
     fi
-    if ! grep -aqF '# desk-agent managed launcher' "$prefix/bin/desk" && [ ! -f "$prefix/share/desk-agent/c-installed" ]; then
+    if ! grep -aqF '# desk-agent managed launcher' "$prefix/bin/desk" && [ ! -f "$prefix/share/desk-agent/installed" ] && [ ! -f "$prefix/share/desk-agent/c-installed" ]; then
         echo '已有其他 desk 命令，未覆盖。' >&2; exit 1
     fi
 fi
@@ -25,7 +25,7 @@ temporary=$(mktemp "$prefix/bin/.desk-install-XXXXXX")
 trap '[ ! -f "$temporary" ] || unlink "$temporary"' EXIT HUP INT TERM
 install -m 755 "$source_dir/build/desk" "$temporary"
 mv -f "$temporary" "$prefix/bin/desk"
-printf '%s\n' 'desk-agent pure C installation' > "$prefix/share/desk-agent/c-installed"
+printf '%s\n' 'desk-agent installation' > "$prefix/share/desk-agent/installed"
 if [ "$setup_path" -eq 1 ]; then
     case ":${PATH:-}:" in
         *":$prefix/bin:"*) ;;
@@ -43,4 +43,4 @@ if [ "$setup_path" -eq 1 ]; then
             ;;
     esac
 fi
-printf '已安装纯 C 可执行文件：%s/bin/desk\n重新运行 desk 即可。\n' "$prefix"
+printf '已安装：%s/bin/desk\n重新运行 desk 即可。\n' "$prefix"

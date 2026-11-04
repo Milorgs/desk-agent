@@ -1,4 +1,4 @@
-#include "desk.h"
+#include "desk.hpp"
 #include <sys/stat.h>
 #include <sys/random.h>
 #include <unistd.h>
@@ -34,6 +34,10 @@ int iget(J *j,const char *key,int fallback){
 }
 bool bget(J *j,const char *key){
     return json_object_get_boolean(get(j,key));
+}
+bool tool_failed(J *r){
+    J *accepted=get(r,"accepted");
+    return get(r,"error")||bget(r,"denied")||bget(r,"timed_out")||iget(r,"exit_code",0)!=0||(accepted&&!json_object_get_boolean(accepted));
 }
 void put(J *j,const char *key,J *v){
     json_object_object_add(j,key,v);
@@ -76,7 +80,7 @@ char *read_bytes(const char *path,size_t limit,size_t *length){
         errno=EFBIG;
         return NULL;
     }
-    char *buffer=malloc(limit+1);
+    char *buffer=static_cast<char *>(malloc(limit+1));
     if(!buffer){
         close(fd);
         return NULL;

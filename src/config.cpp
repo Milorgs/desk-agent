@@ -1,4 +1,4 @@
-#include "desk.h"
+#include "desk.hpp"
 #include <curl/curl.h>
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -201,6 +201,7 @@ static J *legacy_store(App *a){
         }
     }
     free(text);
+    {
     if(path_suffix(path,a->config_dir,"/auth.json")){
         json_object_put(store);
         return NULL;
@@ -229,6 +230,7 @@ static J *legacy_store(App *a){
     }
     json_object_put(auth);
     return store;
+    }
     bad: free(text);
     json_object_put(store);
     seterr(a,"旧 TOML 配置包含无法迁移的格式，原文件未改动。请检查配置格式。");

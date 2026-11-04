@@ -1,4 +1,4 @@
-#include "desk.h"
+#include "desk.hpp"
 #include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +9,7 @@ static void on_signal(int number){
     interrupted=number;
 }
 static void status(App *a){
-    printf("\n  desk %s · 纯 C\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n",VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,a->state?a->state:"等待任务",a->desktop?"开启":"关闭",a->yes?"自动批准":"执行前确认");
+    printf("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n",VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,a->state?a->state:"等待任务",a->desktop?"开启":"关闭",a->yes?"自动批准":"执行前确认");
 }
 static char *field(const char *name,const char *fallback,bool secret){
     char prompt[8192];
@@ -43,11 +43,11 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
         seterr(a,"配置名已存在，请选择另一个名称。");
         return -1;
     }
-    J *candidate=fresh?config_default(name):copy(a->config);
+    JsonPtr candidate_owner(fresh?config_default(name):copy(a->config));
+    J *candidate=candidate_owner.get();
     if(!candidate)return -1;
     const char *protocol=selected?selected:choose_protocol(sget(candidate,"protocol"));
     if(!protocol){
-        json_object_put(candidate);
         return 0;
     }
     bool changed=strcmp(sget(candidate,"protocol"),protocol)!=0;
@@ -55,7 +55,7 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
     if(changed)put(candidate,"base_url",str(!strcmp(protocol,"anthropic")?"https://api.anthropic.com/v1":"https://api.openai.com/v1"));
     puts("\n密钥输入不显示，仅保存在本机私有配置文件。");
     char *base=field("API 地址",sget(candidate,"base_url"),false);
-    if(!base)goto cancel;
+    if(!base)return 0;
     bool host_changed=changed;
     CURLU *old=curl_url(),*next=curl_url();
     char *h1=NULL,*h2=NULL,*s1=NULL,*s2=NULL,*p1=NULL,*p2=NULL;
@@ -79,42 +79,37 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
     put(candidate,"base_url",str(base));
     free(base);
     char *model=field("模型名称",sget(candidate,"model"),false);
-    if(!model)goto cancel;
+    if(!model)return 0;
     put(candidate,"model",str(model));
     free(model);
     if(host_changed)put(candidate,"api_key",str(""));
     char *key=field("API Key",sget(candidate,"api_key"),true);
-    if(!key)goto cancel;
+    if(!key)return 0;
     put(candidate,"api_key",str(key));
     free(key);
     if(config_valid(a,candidate)){
-        json_object_put(candidate);
         return -1;
     }
     puts("\n  [1] 测试连接并保存（少量 API 用量）\n  [2] 直接保存，稍后测试\n  [0] 取消");
     for(;;){
         char *choice=field("请选择","1",false);
-        if(!choice)goto cancel;
+        if(!choice)return 0;
         int action=!strcmp(choice,"1")?1:!strcmp(choice,"2")?2:!strcmp(choice,"0")?0:-1;
         free(choice);
-        if(!action)goto cancel;
+        if(!action)return 0;
         if(action<0){
             puts("请输入 1、2 或 0。");
             continue;
         }
         if(action==1&&api_check(a,candidate)){
-            json_object_put(candidate);
             return -1;
         }
         if(action==2)puts("配置尚未联网验证。");
         break;
     }
     int rc=save_config(a,candidate);
-    json_object_put(candidate);
     if(!rc)puts("已保存并选用该模型。");
     return rc;
-    cancel:json_object_put(candidate);
-    return 0;
 }
 static int add_model(App *a,const char *preset){
     const char *protocol=choose_protocol("openai");
@@ -265,7 +260,7 @@ static int chat(App *a){
 static int menu(App *a){
     for(;;){
         interrupted=0;
-        printf("\n  desk %s · 纯 C\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [0] 退出\n",VERSION,*sget(a->config,"model")?sget(a->config,"profile"):"未配置",*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
+        printf("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [0] 退出\n",VERSION,*sget(a->config,"model")?sget(a->config,"profile"):"未配置",*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
         char *choice=field("请选择","1",false);
         if(!choice){
             if(interrupted==SIGINT){
@@ -297,12 +292,9 @@ static int menu(App *a){
 static void help(void){
     puts("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--version 查看版本\n--help 帮助");
 }
-int main(int argc,char **argv){
+static int run_cli(int argc,char **argv){
     setlocale(LC_ALL,"");
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    struct sigaction action={
-        0
-    };
+    struct sigaction action{};
     action.sa_handler=on_signal;
     sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL);
@@ -310,6 +302,8 @@ int main(int argc,char **argv){
     App a={
         .yes=false,.shell=true,.desktop=false,.record=false,.max_steps=20,.state="等待任务"
     };
+    auto cleanup_app=[](App *app){app_cleanup(app);};
+    std::unique_ptr<App,decltype(cleanup_app)> resources(&a,cleanup_app);
     const char *workspace=".",*profile=NULL,*task=NULL,*app="";
     int rc=0;
     for(int i=1;i<argc;i++){
@@ -339,7 +333,7 @@ int main(int argc,char **argv){
             else if(!strcmp(arg,"--app"))app=v;
             else if(!strcmp(arg,"--shell-backend")){
                 if(strcmp(v,"c")){
-                    fprintf(stderr,"此版本仅使用 C 后端。\n");
+                    fprintf(stderr,"不支持该后端选项，请省略 --shell-backend。\n");
                     rc=2;
                     goto cleanup;
                 }
@@ -383,7 +377,7 @@ int main(int argc,char **argv){
         a.config=copy(c);
     }
     if(task&&!strcmp(task,"doctor")){
-        printf("desk %s · 纯 C\n命令执行：C 原生\nAT-SPI：%s\nAPI 配置：%s（未联网验证）\n",VERSION,desktop_compiled()?"已编译，真实桌面操作仍需验证":"未编译",config_valid(&a,a.config)?"不完整":"完整");
+        printf("desk %s\n命令工具：%s\n桌面支持：%s\nAPI 配置：%s（未联网验证）\n",VERSION,a.shell?"开启":"关闭",desktop_compiled()?"可用，真实桌面操作仍需验证":"当前构建未启用",config_valid(&a,a.config)?"不完整":"完整");
         goto cleanup;
     }
     if(task&&!strcmp(task,"config")){
@@ -413,7 +407,18 @@ int main(int argc,char **argv){
         if(rc)fprintf(stderr,"%s\n",a.error);
     }
     else chat(&a);
-    cleanup:app_cleanup(&a);
-    curl_global_cleanup();
+    cleanup:
     return interrupted==SIGTERM?143:interrupted==SIGINT?130:rc;
+}
+int main(int argc,char **argv){
+    if(curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK){
+        fputs("无法初始化网络组件。\n",stderr);
+        return 1;
+    }
+    int result=1;
+    try { result=run_cli(argc,argv); }
+    catch(const std::bad_alloc &) { fputs("内存不足，本次任务已停止。\n",stderr); }
+    catch(const std::exception &) { fputs("程序发生内部错误，本次任务已停止。\n",stderr); }
+    curl_global_cleanup();
+    return result;
 }

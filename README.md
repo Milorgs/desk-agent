@@ -1,12 +1,12 @@
-# desk-agent · 纯 C
+# desk-agent
 
-Linux AI 电脑助手 CLI。菜单、模型配置、API 调用、任务循环、文件编辑、命令执行和 AT-SPI 桌面适配全部使用 C 实现。**运行、构建、安装和测试均不需要 Python。**
+Linux AI 电脑助手。在终端输入 `desk`，用自然语言搜索和修改文件、执行命令，或通过桌面控件操作应用。支持保存多套模型配置，切换 OpenAI接口和 Anthropic接口。
 
-当前版本 **1.0.0**。已通过 C 单元与集成测试及 AddressSanitizer、UndefinedBehaviorSanitizer 检查。API 集成测试使用本地 C 模拟服务，真实模型和真实桌面操作仍需用户环境联调。旧 Python 源码可以在 Git 历史中查看。
+当前版本 **1.1.0**。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 集成测试使用本地模拟服务，真实模型和真实桌面操作仍需用户环境联调。
 
 ## 安装
 
-需要 C 编译器、Make、pkg-config、libcurl、json-c 和 OpenSSL 开发库。AT-SPI 开发库可选：检测到时编译桌面功能，否则文件、API 和终端功能仍可使用。
+需要支持 C++20 的编译器、Make、pkg-config、libcurl、json-c 和 OpenSSL 开发库。AT-SPI 开发库可选：检测到时编译桌面功能，否则文件、API 和终端功能仍可使用。
 
 - Arch Linux：`base-devel pkgconf curl json-c openssl at-spi2-core`
 - Ubuntu/Debian：`build-essential pkg-config libcurl4-openssl-dev libjson-c-dev libssl-dev libatspi2.0-dev`
@@ -17,7 +17,7 @@ Linux AI 电脑助手 CLI。菜单、模型配置、API 调用、任务循环、
 ./install.sh --setup-path
 ```
 
-新开终端输入 `desk`。默认安装到 `~/.local/bin/desk`，这是原生 ELF 文件，会替换旧版受管理的启动脚本。程序依赖对应的系统 C 动态库，不是静态单文件发行包。
+新开终端输入 `desk`。默认安装到 `~/.local/bin/desk`，会替换旧版受管理的启动文件；运行需要对应的系统动态库。
 
 开发时可直接：
 
@@ -51,7 +51,8 @@ OpenAI 兼容接口使用 `/chat/completions`。Anthropic 原生接口使用 `/m
 
 ```text
 › 创建一份学习清单保存到 todo.md，再读取核对
-› 再加上复习 C 语言
+› 再加上复习 Linux 命令
+› 找到项目中显示欢迎语的位置，只修改那一句，并检查结果
 ```
 
 - `/menu` 返回菜单并保留对话；`/new` 清空对话。
@@ -85,7 +86,7 @@ desk --record
 
 新版配置是 `$XDG_CONFIG_HOME/desk-agent/settings.json`，默认 `~/.config/desk-agent/settings.json`，权限 600，包含每套模型的密钥。
 
-没有新配置时，由 C 程序读取旧版生成的 `config.toml` 和 `auth.json`；成功保存或选择配置后写入新文件，旧文件保持原样。迁移器支持旧程序生成的双引号字符串、整数和 profiles 格式，不是完整 TOML 解析器；遇到无法迁移的格式会明确报错。
+没有新配置时，读取旧版生成的 `config.toml` 和 `auth.json`；成功保存或选择配置后写入新文件，旧文件保持原样。迁移器支持旧程序生成的双引号字符串、整数和 profiles 格式，不是完整 TOML 解析器；遇到无法迁移的格式会明确报错。
 
 Anthropic 配置支持 `max_tokens`（默认 4096）和 `anthropic_version`（默认固定为 `2023-06-01`），切换模型保留这些字段。
 
@@ -93,7 +94,9 @@ Anthropic 配置支持 `max_tokens`（默认 4096）和 `anthropic_version`（�
 
 ## 当前能力与限制
 
-- 文件工具：工作目录内的 64 KB UTF-8 文本，覆盖前验证 SHA256 并备份到 `.desk-agent/backups/`；拒绝外部路径、外链及凭据、Git 内部目录。
+- 文件工具：搜索文本并返回路径和行号，读取文件，精确替换一处文本或写入整个文件。支持工作目录内的 64 KB UTF-8 文本，修改前验证 SHA256 并备份到 `.desk-agent/backups/`，写入后回读核对字节；拒绝外部路径、外链及凭据、Git 内部目录。
+- 搜索预算：最多 50 条匹配行、1000 个文件、10000 个目录项、16 层、8 MB 文本、3 秒；跳过依赖/构建目录、遍历中的符号链接、过大和非文本文件。会返回截断与跳过信息；没有匹配不能证明整个项目不存在目标文本，可缩小目录继续查找。
+- 执行反馈：显示文件路径、命令、搜索数量、退出码、命令输出预览和耗时。相同读取调用三次获得相同结果会停止；成功修改后允许重新读取。命令或修改失败不会被无关读取清除，三次尚未恢复的失败会停止。相同类别、相同目标的成功重试才算恢复；这仍不能代替对用户目标的验证。
 - 命令工具：当前用户权限，**不是操作系统沙箱**；30 秒超时，最多显示 16 KB 输出，子进程单文件上限 2 MB。结束或取消时清理同组后台进程，不支持持久服务或主动脱离进程组的程序。
 - 桌面工具：AT-SPI 读取控件、调用公布的动作、替换编辑区内容。引用 30 秒失效，一次操作后全部失效，跳过密码控件。不支持全局坐标点击、任意快捷键和截图识别。
 - API：OpenAI Chat Completions 与 Anthropic 原生 Messages；保留 Anthropic 工具续接所需的签名内容块。暂不支持 Responses、OAuth、云平台 IAM、自定义 headers、流式及服务端工具。
@@ -109,19 +112,19 @@ make test
 make sanitize
 ```
 
-测试和本地 HTTP 模拟服务均由 C 编写，覆盖中文文件和备份、SHA256、配置迁移、模型隔离、文件路径限制、命令超时和进程清理、上下文边界、数字菜单，以及两种 API 的文件创建/读取循环。Anthropic 测试检查认证头、多工具结果合并及签名内容保留。
+测试覆盖中文搜索和局部修改、备份与冲突、SHA256、配置迁移、模型隔离、文件路径限制、命令超时和进程清理、上下文边界、数字菜单，以及两种 API 的工具循环。模拟接口还检查失败恢复、重复调用停止、损坏的参数 JSON 整轮拒绝，以及 Anthropic 认证头、多工具结果合并、错误标记和签名内容保留。
 
 ## 源码结构
 
 ```text
-src/main.c      菜单、配置向导、对话与参数
-src/config.c    原子 JSON 配置及旧配置迁移
-src/api.c       libcurl 传输与双接口适配
-src/agent.c     任务循环、上下文、记录和状态
-src/files.c     工具定义、参数校验、文件与 SHA256
-src/process.c   原生命令执行与进程组清理
-src/desktop.c   可选 AT-SPI 桌面适配
-src/util.c      JSON、文件、输入与路径辅助
-src/desk.h      模块接口
-tests-c/test.c  C 单元/集成测试及 HTTP 模拟服务
+src/main.cpp     菜单、配置向导、对话与参数
+src/config.cpp   原子 JSON 配置及旧配置迁移
+src/api.cpp      libcurl 传输与双接口适配
+src/agent.cpp    任务循环、上下文、记录和状态
+src/files.cpp    工具定义、参数校验、文件与 SHA256
+src/process.cpp  原生命令执行与进程组清理
+src/desktop.cpp  可选 AT-SPI 桌面适配
+src/util.cpp     JSON、文件、输入与路径辅助
+src/desk.hpp     模块接口
+tests/test.cpp   自动化测试及 HTTP 模拟服务
 ```

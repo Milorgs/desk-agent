@@ -1,4 +1,4 @@
-#include "desk.h"
+#include "desk.hpp"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -16,10 +16,10 @@ typedef struct{
 Desktop;
 static Desktop *desktop(App *a){
     if(!a->desktop_data)a->desktop_data=calloc(1,sizeof(Desktop));
-    return a->desktop_data;
+    return static_cast<Desktop *>(a->desktop_data);
 }
 void desktop_clear(App *a){
-    Desktop *d=a->desktop_data;
+    Desktop *d=static_cast<Desktop *>(a->desktop_data);
     if(!d)return;
     for(int i=0;i<d->count;i++){
         g_object_unref(d->nodes[i]);

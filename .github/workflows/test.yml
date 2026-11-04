@@ -1,4 +1,4 @@
-name: C build and tests
+name: Build and tests
 on: [push, pull_request]
 permissions:
   contents: read
@@ -10,7 +10,7 @@ jobs:
         mode: [release, sanitize]
     steps:
       - uses: actions/checkout@v4
-      - name: Install C dependencies
+      - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libcurl4-openssl-dev libjson-c-dev libssl-dev libatspi2.0-dev
       - name: Build and run tests
         run: |

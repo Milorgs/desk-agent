@@ -1,6 +1,8 @@
 #ifndef DESK_H
 #define DESK_H
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <json-c/json.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -8,20 +10,26 @@
 #include <limits.h>
 #include <sys/types.h>
 #include <stdint.h>
-#define VERSION "1.0.0"
+#include <memory>
+#include <string>
+#include <vector>
+#define VERSION "1.1.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
-typedef struct json_object J;
-typedef struct {
-    J *store, *config, *messages;
-    char root[PATH_MAX], config_dir[PATH_MAX], error[512];
-    bool yes, shell, desktop, record;
-    int max_steps;
-    const char *state;
-    void *desktop_data;
-}
-App;
+using J = json_object;
+struct JsonDeleter {
+    void operator()(J *value) const noexcept { json_object_put(value); }
+};
+using JsonPtr = std::unique_ptr<J,JsonDeleter>;
+struct App {
+    J *store=nullptr, *config=nullptr, *messages=nullptr;
+    char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
+    bool yes=false, shell=true, desktop=false, record=false;
+    int max_steps=20;
+    const char *state="等待任务";
+    void *desktop_data=nullptr;
+};
 extern volatile sig_atomic_t interrupted;
 J *obj(void);
 J *arr(void);
@@ -33,6 +41,7 @@ size_t alen(J *j);
 J *at(J *j,size_t index);
 int iget(J *j,const char *key,int fallback);
 bool bget(J *j,const char *key);
+bool tool_failed(J *result);
 void put(J *j,const char *key,J *value);
 void add(J *j,J *value);
 J *err(const char *message);

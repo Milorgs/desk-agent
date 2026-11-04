@@ -1,4 +1,4 @@
-#include "desk.h"
+#include "desk.hpp"
 #include <curl/curl.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -99,6 +99,104 @@ static void test_files(void){
     char *hash=sha256("abc",3);
     CHECK(!strcmp(hash,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
     free(hash);
+    app_cleanup(&a);
+}
+static void fixture(App *a,const char *name,const void *data,size_t length){
+    char path[PATH_MAX];
+    CHECK(!path_suffix(path,a->root,name));
+    CHECK(!atomic_file(path,data,length,0600));
+}
+static void test_search_and_edit(void){
+    App a=fresh();
+    const char *original="标题=旧值\r\n保留这一行\r\n";
+    fixture(&a,"/文档.txt",original,strlen(original));
+    fixture(&a,"/.env","旧值",strlen("旧值"));
+    const char binary[]={ 'x', (char)0xff, '\n' };
+    fixture(&a,"/binary",binary,sizeof binary);
+    char ignored[PATH_MAX],link[PATH_MAX];
+    CHECK(!path_suffix(ignored,a.root,"/node_modules"));
+    CHECK(!mkdirs(ignored,0700));
+    fixture(&a,"/node_modules/dependency","旧值",strlen("旧值"));
+    CHECK(!path_suffix(link,a.root,"/alias.txt"));
+    CHECK(!symlink("文档.txt",link));
+    J *v=args(".");
+    put(v,"query",str("旧值"));
+    J *r=tool_call(&a,"search_text",v);
+    CHECK(!get(r,"error"));
+    CHECK(alen(get(r,"matches"))==1);
+    CHECK(!strcmp(sget(at(get(r,"matches"),0),"path"),"文档.txt"));
+    CHECK(iget(at(get(r,"matches"),0),"line",0)==1);
+    CHECK(iget(r,"skipped",0)>=4);
+    CHECK(!bget(r,"truncated"));
+    json_object_put(r);
+    put(v,"query",str(""));
+    r=tool_call(&a,"search_text",v);
+    CHECK(get(r,"error"));
+    json_object_put(r);
+    json_object_put(v);
+    v=args("文档.txt");
+    r=tool_call(&a,"read_file",v);
+    char *hash=strdup(sget(r,"sha256"));
+    json_object_put(r);
+    put(v,"old_text",str("旧值"));
+    put(v,"new_text",str("新值"));
+    put(v,"expected_sha256",str(hash));
+    r=tool_call(&a,"edit_file",v);
+    CHECK(!get(r,"error")&&bget(r,"verified"));
+    char *backup=read_bytes(sget(r,"backup"),FILE_LIMIT,NULL);
+    CHECK(backup&&!strcmp(backup,original));
+    free(backup);
+    char path[PATH_MAX];
+    CHECK(!path_suffix(path,a.root,"/文档.txt"));
+    char *updated=read_bytes(path,FILE_LIMIT,NULL);
+    CHECK(updated&&!strcmp(updated,"标题=新值\r\n保留这一行\r\n"));
+    char *actual_hash=sha256(updated,strlen(updated));
+    CHECK(!strcmp(sget(r,"sha256"),actual_hash));
+    free(actual_hash);
+    free(updated);
+    json_object_put(r);
+    struct stat st;
+    CHECK(!stat(path,&st)&&(st.st_mode&0777)==0600);
+    r=tool_call(&a,"edit_file",v);
+    CHECK(get(r,"error"));
+    json_object_put(r);
+    put(v,"expected_sha256",NULL);
+    r=tool_call(&a,"edit_file",v);
+    CHECK(get(r,"error"));
+    json_object_put(r);
+    json_object_put(v);
+    free(hash);
+    fixture(&a,"/overlap.txt","aaa",3);
+    v=args("overlap.txt");
+    put(v,"old_text",str("aa"));
+    put(v,"new_text",str("z"));
+    hash=sha256("aaa",3);
+    put(v,"expected_sha256",str(hash));
+    r=tool_call(&a,"edit_file",v);
+    CHECK(get(r,"error"));
+    json_object_put(r);
+    put(v,"old_text",str("aaa"));
+    put(v,"new_text",str(""));
+    r=tool_call(&a,"edit_file",v);
+    CHECK(!get(r,"error"));
+    json_object_put(r);
+    json_object_put(v);
+    free(hash);
+    CHECK(!path_suffix(path,a.root,"/overlap.txt"));
+    size_t n=99;
+    updated=read_bytes(path,FILE_LIMIT,&n);
+    CHECK(updated&&n==0);
+    free(updated);
+    char many[2048]="";
+    for(int i=0;i<60;i++)strcat(many,"匹配\n");
+    fixture(&a,"/many.txt",many,strlen(many));
+    v=args("many.txt");
+    put(v,"query",str("匹配"));
+    r=tool_call(&a,"search_text",v);
+    CHECK(alen(get(r,"matches"))==50&&bget(r,"truncated"));
+    CHECK(iget(at(get(r,"matches"),49),"line",0)==50);
+    json_object_put(r);
+    json_object_put(v);
     app_cleanup(&a);
 }
 static void test_config(void){
@@ -202,7 +300,7 @@ static void test_process(void){
     double until=monotime()+2;
     while(alive(pid)&&monotime()<until)usleep(1000);
     CHECK(!alive(pid));
-    struct sigaction action={0},previous;
+    struct sigaction action{},previous;
     action.sa_handler=cancel_command;
     sigemptyset(&action.sa_mask);
     CHECK(!sigaction(SIGALRM,&action,&previous));
@@ -247,12 +345,12 @@ static void test_context_and_validation(void){
     json_object_put(data);
     app_cleanup(&a);
 }
-/* A real local HTTP server, written in C. No external model or real credential. */ static pid_t fake_server(App *a,const char **responses,int count){
+/* A local HTTP server; no external model or real credential. */ static pid_t fake_server(App *a,const char **responses,int count){
     int fd=socket(AF_INET,SOCK_STREAM,0);
     CHECK(fd>=0);
-    struct sockaddr_in address={
-        .sin_family=AF_INET,.sin_addr.s_addr=htonl(INADDR_LOOPBACK),.sin_port=0
-    };
+    struct sockaddr_in address{};
+    address.sin_family=AF_INET;
+    address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     CHECK(!bind(fd,(struct sockaddr *)&address,sizeof address));
     socklen_t length=sizeof address;
     CHECK(!getsockname(fd,(struct sockaddr *)&address,&length));
@@ -285,10 +383,9 @@ static void test_context_and_validation(void){
             }
             free(line);
             if(content_length<0||content_length>500000)_exit(2);
-            char *body=calloc(1,(size_t)content_length+1);
-            if(content_length&&fread(body,1,(size_t)content_length,stream)!=(size_t)content_length)_exit(2);
-            J *parsed=json_tokener_parse(body);
-            free(body);
+            std::string body(static_cast<size_t>(content_length),'\0');
+            if(content_length&&fread(body.data(),1,body.size(),stream)!=body.size())_exit(2);
+            J *parsed=json_tokener_parse(body.c_str());
             put(capture,"body",parsed);
             char path[PATH_MAX],suffix[64];
             snprintf(suffix,sizeof suffix,"/request-%d.json",i);
@@ -320,6 +417,168 @@ static void server_done(pid_t child){
     int status;
     CHECK(waitpid(child,&status,0)==child);
     CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+}
+static J *model_call(const char *id,const char *name,J *arguments){
+    JsonPtr input(arguments);
+    J *call=obj(),*fn=obj();
+    put(call,"id",str(id));
+    put(call,"type",str("function"));
+    put(fn,"name",str(name));
+    put(fn,"arguments",str(json_object_to_json_string_ext(input.get(),JSON_C_TO_STRING_PLAIN)));
+    put(call,"function",fn);
+    return call;
+}
+static std::string model_reply(J *calls,const char *text=""){
+    JsonPtr response(obj());
+    J *choices=arr(),*choice=obj(),*message=obj();
+    put(message,"role",str("assistant"));
+    put(message,"content",str(text));
+    if(calls)put(message,"tool_calls",calls);
+    put(choice,"message",message);
+    add(choices,choice);
+    put(response.get(),"choices",choices);
+    return json_object_to_json_string_ext(response.get(),JSON_C_TO_STRING_PLAIN);
+}
+static std::string model_tool(const char *id,const char *name,J *arguments){
+    J *calls=arr();
+    add(calls,model_call(id,name,arguments));
+    return model_reply(calls);
+}
+static J *command(const char *text){
+    J *v=obj();
+    put(v,"command",str(text));
+    return v;
+}
+static int workflow(App *a,const std::vector<std::string> &replies){
+    std::vector<const char *> responses;
+    for(const auto &reply:replies)responses.push_back(reply.c_str());
+    json_object_put(a->config);
+    a->config=config("test","openai");
+    pid_t child=fake_server(a,responses.data(),static_cast<int>(responses.size()));
+    int result=run_task(a,"完成任务并检查实际结果");
+    server_done(child);
+    return result;
+}
+static void test_edit_workflow(void){
+    App a=fresh();
+    const char *original="欢迎：旧内容\n保留这行\n";
+    fixture(&a,"/welcome.txt",original,strlen(original));
+    char *hash=sha256(original,strlen(original));
+    J *search=args(".");
+    put(search,"query",str("旧内容"));
+    J *edit=args("welcome.txt");
+    put(edit,"old_text",str("旧内容"));
+    put(edit,"new_text",str("新的欢迎语"));
+    put(edit,"expected_sha256",str(hash));
+    free(hash);
+    CHECK(!workflow(&a,{
+        model_tool("find","search_text",search),
+        model_tool("read","read_file",args("welcome.txt")),
+        model_tool("edit","edit_file",edit),
+        model_tool("check","read_file",args("welcome.txt")),
+        model_reply(nullptr,"已修改并读取核对。")
+    }));
+    JsonPtr request(capture(&a,4));
+    J *messages=get(get(request.get(),"body"),"messages");
+    const char *result=sget(at(messages,alen(messages)-1),"content");
+    CHECK(strstr(result,"新的欢迎语")&&strstr(result,"保留这行"));
+    request.reset(capture(&a,3));
+    messages=get(get(request.get(),"body"),"messages");
+    JsonPtr written(json_tokener_parse(sget(at(messages,alen(messages)-1),"content")));
+    CHECK(bget(written.get(),"verified"));
+    CHECK(*sget(written.get(),"backup"));
+    app_cleanup(&a);
+}
+static void test_recovery_and_loops(void){
+    App a=fresh();
+    CHECK(workflow(&a,{
+        model_tool("bad","run_shell",command("exit 7")),
+        model_tool("unrelated","list_files",args(".")),
+        model_reply(nullptr,"False success")
+    })!=0);
+    CHECK(!strcmp(a.state,"失败"));
+    CHECK(!strstr(json_object_to_json_string(a.messages),"False success"));
+    app_cleanup(&a);
+    a=fresh();
+    J *write=args("ready.txt");
+    put(write,"content",str("ready"));
+    put(write,"expected_sha256",nullptr);
+    CHECK(!workflow(&a,{
+        model_tool("missing","run_shell",command("test -f ready.txt")),
+        model_tool("create","write_file",write),
+        model_tool("retry","run_shell",command("test -f ready.txt")),
+        model_reply(nullptr,"已创建并核对。")
+    }));
+    CHECK(!strcmp(a.state,"本轮结束"));
+    app_cleanup(&a);
+    a=fresh();
+    fixture(&a,"/stable.txt","stable",6);
+    write=args("must-not-exist.txt");
+    put(write,"content",str("not executed"));
+    put(write,"expected_sha256",nullptr);
+    J *last=arr();
+    add(last,model_call("read3","read_file",args("stable.txt")));
+    add(last,model_call("pending","write_file",write));
+    CHECK(workflow(&a,{
+        model_tool("read1","read_file",args("stable.txt")),
+        model_tool("read2","read_file",args("stable.txt")),
+        model_reply(last)
+    })!=0);
+    CHECK(strstr(a.error,"相同工具"));
+    CHECK(strstr(sget(at(a.messages,alen(a.messages)-1),"content"),"未确认执行"));
+    char path[PATH_MAX];
+    CHECK(!path_suffix(path,a.root,"/must-not-exist.txt"));
+    CHECK(access(path,F_OK)!=0&&errno==ENOENT);
+    app_cleanup(&a);
+    a=fresh();
+    write=args("must-not-exist.txt");
+    put(write,"content",str("not executed"));
+    put(write,"expected_sha256",nullptr);
+    last=arr();
+    add(last,model_call("write","write_file",write));
+    J *bad=model_call("malformed","read_file",args("stable.txt"));
+    put(get(bad,"function"),"arguments",str("{} trailing garbage"));
+    add(last,bad);
+    CHECK(workflow(&a,{model_reply(last)})!=0);
+    CHECK(strstr(a.error,"JSON 对象"));
+    CHECK(!path_suffix(path,a.root,"/must-not-exist.txt"));
+    CHECK(access(path,F_OK)!=0&&errno==ENOENT);
+    app_cleanup(&a);
+    a=fresh();
+    fixture(&a,"/existing.txt","keep",4);
+    write=args("existing.txt");
+    put(write,"content",str("changed"));
+    put(write,"expected_sha256",str("stale-hash"));
+    CHECK(workflow(&a,{
+        model_tool("conflict","write_file",write),
+        model_tool("read","read_file",args("existing.txt")),
+        model_reply(nullptr,"False success")
+    })!=0);
+    CHECK(strstr(a.error,"未恢复"));
+    CHECK(!path_suffix(path,a.root,"/existing.txt"));
+    char *kept=read_bytes(path,FILE_LIMIT,nullptr);
+    CHECK(kept&&!strcmp(kept,"keep"));
+    free(kept);
+    app_cleanup(&a);
+}
+static void test_native_error_flags(void){
+    App a=fresh();
+    J *m=obj();
+    put(m,"role",str("tool"));
+    put(m,"tool_call_id",str("nonzero"));
+    put(m,"content",str("{\"exit_code\":7,\"output\":\"failed\"}"));
+    add(a.messages,m);
+    m=obj();
+    put(m,"role",str("tool"));
+    put(m,"tool_call_id",str("timeout"));
+    put(m,"content",str("{\"exit_code\":0,\"timed_out\":true}"));
+    add(a.messages,m);
+    JsonPtr body(native_payload(a.config,a.messages,nullptr));
+    J *messages=get(body.get(),"messages"),*content=get(at(messages,alen(messages)-1),"content");
+    CHECK(alen(content)==2);
+    CHECK(bget(at(content,0),"is_error"));
+    CHECK(bget(at(content,1),"is_error"));
+    app_cleanup(&a);
 }
 static void test_openai_loop(void){
     App a=fresh();
@@ -427,6 +686,7 @@ int main(void){
     CHECK(mkdtemp(directory));
     strcpy(sandbox,directory);
     test_files();
+    test_search_and_edit();
     test_config();
     test_migration();
     test_process();
@@ -434,8 +694,11 @@ int main(void){
     test_openai_loop();
     test_anthropic_loop();
     test_failed_task();
+    test_edit_workflow();
+    test_recovery_and_loops();
+    test_native_error_flags();
     test_menu();
     curl_global_cleanup();
-    printf("PASS: %d C assertions; file/config/process/context/OpenAI/Anthropic/menu integration.\n",checks);
+    printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu integration.\n",checks);
     return 0;
 }

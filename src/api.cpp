@@ -1,29 +1,23 @@
-#include "desk.h"
+#include "desk.hpp"
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-typedef struct{
-    char *data;
-    size_t len;
-    bool oversized;
-}
-Buffer;
+struct Buffer {
+    std::string data;
+    bool oversized=false;
+};
 static size_t receive(char *p,size_t size,size_t count,void *user){
-    Buffer *b=user;
+    auto *b=static_cast<Buffer *>(user);
     if(size&&count>SIZE_MAX/size)return 0;
     size_t n=size*count;
-    if(n>RESPONSE_LIMIT-b->len){
+    if(n>RESPONSE_LIMIT-b->data.size()){
         b->oversized=true;
         return 0;
     }
-    char *next=realloc(b->data,b->len+n+1);
-    if(!next)return 0;
-    b->data=next;
-    memcpy(b->data+b->len,p,n);
-    b->len+=n;
-    b->data[b->len]=0;
+    try { b->data.append(p,n); }
+    catch(...) { return 0; } // Exceptions must not cross libcurl's C callback.
     return n;
 }
 static int progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl_off_t v){
@@ -49,9 +43,7 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
             seterr(a,"无法初始化 HTTP。");
             return NULL;
         }
-        Buffer b={
-            0
-        };
+        Buffer b;
         struct curl_slist *headers=NULL;
         headers=curl_slist_append(headers,"Accept: application/json");
         headers=curl_slist_append(headers,"Content-Type: application/json");
@@ -89,13 +81,11 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         curl_slist_free_all(headers);
         curl_easy_cleanup(h);
         if(rc!=CURLE_OK){
-            free(b.data);
             seterr(a,interrupted?"请求已取消。":b.oversized?"API 响应超过大小限制。":"API 连接失败或超时；未自动重发请求。");
             return NULL;
         }
         if(status>=200&&status<300){
-            J *data=b.data?json_tokener_parse(b.data):NULL;
-            free(b.data);
+            J *data=b.data.empty()?nullptr:json_tokener_parse(b.data.c_str());
             if(!data||!json_object_is_type(data,json_type_object)){
                 json_object_put(data);
                 seterr(a,"API 未返回有效 JSON 对象，请检查接口地址。");
@@ -103,7 +93,6 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
             }
             return data;
         }
-        free(b.data);
         bool retry=status==429||status==500||status==502||status==503||status==504||status==529;
         if(retry&&attempt<2&&!interrupted){
             fprintf(stderr,"API HTTP %ld，正在重试（%d/2）…\n",status,attempt+1);
@@ -165,7 +154,7 @@ J *native_payload(J *c,J *messages,J *tools){
             put(b,"tool_use_id",str(sget(m,"tool_call_id")));
             put(b,"content",str(sget(m,"content")));
             J *result=json_tokener_parse(sget(m,"content"));
-            put(b,"is_error",json_object_new_boolean(get(result,"error")||bget(result,"denied")));
+            put(b,"is_error",json_object_new_boolean(tool_failed(result)));
             json_object_put(result);
             add(blocks,b);
             role="user";
@@ -224,47 +213,38 @@ J *native_response(App *a,J *data){
         seterr(a,"Anthropic 响应缺少 content 数组。");
         return NULL;
     }
-    J *result=obj(),*calls=arr();
-    char *text=calloc(1,RESPONSE_LIMIT+1);
-    if(!text){
-        json_object_put(result);
-        json_object_put(calls);
-        return NULL;
-    }
+    JsonPtr result(obj()),calls(arr());
+    std::string text;
     for(size_t i=0;i<alen(blocks);i++){
         J *b=at(blocks,i);
         const char *type=sget(b,"type");
         if(!strcmp(type,"text")){
             const char *part=sget(b,"text");
-            if(strlen(text)+strlen(part)+2>RESPONSE_LIMIT)goto bad;
-            if(*text)strcat(text,"\n");
-            strcat(text,part);
+            if(text.size()+strlen(part)+2>RESPONSE_LIMIT)goto bad;
+            if(!text.empty())text+='\n';
+            text+=part;
         }
         else if(!strcmp(type,"tool_use")){
             const char *id=sget(b,"id"),*name=sget(b,"name");
             if(!*id||!*name||!json_object_is_type(get(b,"input"),json_type_object))goto bad;
-            for(size_t k=0;k<alen(calls);k++)if(!strcmp(sget(at(calls,k),"id"),id))goto bad;
+            for(size_t k=0;k<alen(calls.get());k++)if(!strcmp(sget(at(calls.get(),k),"id"),id))goto bad;
             J *call=obj(),*f=obj();
             put(call,"id",str(id));
             put(call,"type",str("function"));
             put(f,"name",str(name));
             put(f,"arguments",str(json_object_to_json_string_ext(get(b,"input"),JSON_C_TO_STRING_PLAIN)));
             put(call,"function",f);
-            add(calls,call);
+            add(calls.get(),call);
         }
         else if(strcmp(type,"thinking")&&strcmp(type,"redacted_thinking"))goto bad;
     }
-    if((!strcmp(stop,"tool_use"))!=(alen(calls)>0))goto bad;
-    put(result,"role",str("assistant"));
-    put(result,"content",*text?str(text):NULL);
-    put(result,"_anthropic_content",copy(blocks));
-    if(alen(calls))put(result,"tool_calls",calls);
-    else json_object_put(calls);
-    free(text);
-    return result;
-    bad:free(text);
-    json_object_put(result);
-    json_object_put(calls);
+    if((!strcmp(stop,"tool_use"))!=(alen(calls.get())>0))goto bad;
+    put(result.get(),"role",str("assistant"));
+    put(result.get(),"content",text.empty()?nullptr:str(text.c_str()));
+    put(result.get(),"_anthropic_content",copy(blocks));
+    if(alen(calls.get()))put(result.get(),"tool_calls",calls.release());
+    return result.release();
+    bad:
     seterr(a,"Anthropic 工具或内容块格式无效，本轮工具未执行。");
     return NULL;
 }
@@ -290,7 +270,14 @@ J *api_complete(App *a,J *c,J *messages,J *tools){
         J *choice=at(get(data,"choices"),0);
         if(!strcmp(sget(choice,"finish_reason"),"length"))seterr(a,"模型响应被截断，本轮工具未执行。");
         else if(get(get(choice,"message"),"refusal"))seterr(a,"模型拒绝处理本次请求。");
-        else if(json_object_is_type(get(choice,"message"),json_type_object))result=copy(get(choice,"message"));
+        else if(json_object_is_type(get(choice,"message"),json_type_object)){
+            result=copy(get(choice,"message"));
+            if(get(result,"role")&&strcmp(sget(result,"role"),"assistant")){
+                json_object_put(result);
+                result=NULL;
+                seterr(a,"模型响应的消息角色无效。");
+            }else if(result)put(result,"role",str("assistant"));
+        }
         else seterr(a,"Chat Completions 响应格式无效。");
     }
     json_object_put(data);
