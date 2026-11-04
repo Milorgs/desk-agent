@@ -1,4 +1,4 @@
-name: tests
+name: C build and tests
 on: [push, pull_request]
 permissions:
   contents: read
@@ -7,11 +7,18 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.11', '3.14']
+        mode: [release, sanitize]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - run: python -m unittest discover -s tests -v
-      - run: python -m desk_agent doctor
+      - name: Install C dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libcurl4-openssl-dev libjson-c-dev libssl-dev libatspi2.0-dev
+      - name: Build and run tests
+        run: |
+          if [ '${{ matrix.mode }}' = sanitize ]; then
+            make sanitize
+          else
+            make test
+            ./build/desk --version
+            ./install.sh --prefix "$RUNNER_TEMP/desk-install"
+            "$RUNNER_TEMP/desk-install/bin/desk" --version
+          fi
