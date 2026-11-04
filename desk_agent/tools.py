@@ -2,15 +2,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import signal
-import resource
 import stat
-import subprocess
 import tempfile
 import uuid
 
 from .desktop import Desktop
 from .config import config_path
+from .process import run_c, run_python
 
 
 def schema(name, description, properties):
@@ -27,7 +25,10 @@ STRING = {"type": "string"}
 class Tools:
     shell_timeout = 30
 
-    def __init__(self, root, approve, allow_shell=False, allow_desktop=False):
+    def __init__(self, root, approve, allow_shell=False, allow_desktop=False, shell_backend="python"):
+        if shell_backend not in {"python", "c"}:
+            raise ValueError("命令后端只能是 python 或 c。")
+        self.shell_backend = shell_backend
         self.root = Path(root).resolve(strict=True)
         if not self.root.is_dir():
             raise ValueError("工作目录必须是文件夹。")
@@ -104,6 +105,8 @@ class Tools:
             if name == "desktop_action":
                 return self.desktop.perform(arguments["ref"], action=arguments["action"])
             return self.desktop.perform(arguments["ref"], text=arguments["text"])
+        except EOFError:
+            raise
         except Exception as exc:
             return {"error": str(exc)[:1200], "type": type(exc).__name__}
 
@@ -153,29 +156,5 @@ class Tools:
     def shell(self, command):
         if not self.approve("执行命令（具有当前用户权限，不是隔离环境）：\n" + command):
             return {"denied": True, "error": "用户拒绝执行，不要绕过。"}
-        env = {key: value for key, value in os.environ.items()
-               if not any(word in key.upper() for word in ("KEY", "TOKEN", "SECRET", "PASSWORD"))}
-        with tempfile.TemporaryFile() as output:
-            def limit_output():
-                resource.setrlimit(resource.RLIMIT_FSIZE, (2_000_000, 2_000_000))
-
-            process = subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-c", command],
-                                       cwd=self.root, env=env, stdin=subprocess.DEVNULL,
-                                       stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
-                                       preexec_fn=limit_output)
-            timed_out = False
-            try:
-                process.wait(timeout=self.shell_timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-            finally:
-                # Also clean up background children; long-lived services are not supported yet.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-            output.seek(0)
-            data = output.read(16001)
-        return {"exit_code": process.returncode, "timed_out": timed_out,
-                "output": data[:16000].decode("utf-8", errors="replace"), "truncated": len(data) > 16000}
+        runner = run_c if self.shell_backend == "c" else run_python
+        return runner(self.root, command, self.shell_timeout)

@@ -3,6 +3,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 
 from . import anthropic
 
@@ -10,6 +11,12 @@ from . import anthropic
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+@dataclass(frozen=True)
+class ConnectionCheck:
+    success: bool
+    message: str
 
 
 ERRORS = {
@@ -97,7 +104,7 @@ class ChatClient:
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("服务商未返回兼容的模型列表；可用 /model 模型名称 手动设置。") from None
 
-    def test(self):
+    def check(self):
         tool = {"type": "function", "function": {"name": "connection_check", "description": "Check API tool-call support without operating the computer.",
                 "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}}
         choice = "auto" if self.config.protocol == "anthropic" else {"type": "function", "function": {"name": "connection_check"}}
@@ -105,5 +112,8 @@ class ChatClient:
         for call in reply.get("tool_calls") or []:
             function = call.get("function") if isinstance(call, dict) else None
             if isinstance(function, dict) and function.get("name") == "connection_check":
-                return "连接成功，模型已返回工具调用。测试未操作电脑。"
-        return "API 已返回响应，但未确认工具调用能力；请更换支持工具调用的模型。"
+                return ConnectionCheck(True, "连接成功，模型已返回工具调用。测试未操作电脑。")
+        return ConnectionCheck(False, "API 已返回响应，但未确认工具调用能力；请更换支持工具调用的模型。")
+
+    def test(self):
+        return self.check().message
