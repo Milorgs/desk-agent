@@ -43,6 +43,8 @@ class Agent:
             if any(not isinstance(c, dict) or not c.get("id") or not isinstance(c.get("function"), dict) for c in calls):
                 raise ValueError("模型返回了无效工具调用。")
             assistant = {"role": "assistant", "content": message.get("content")}
+            if getattr(getattr(self.client, "config", None), "protocol", None) == "anthropic" and "_anthropic_content" in message:
+                assistant["_anthropic_content"] = message["_anthropic_content"]
             if calls:
                 assistant["tool_calls"] = calls
             self.messages.append(assistant)

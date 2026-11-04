@@ -4,6 +4,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import anthropic
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -11,7 +13,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 ERRORS = {
-    400: "请求格式或模型参数不兼容；请确认该接口支持 Chat Completions 和工具调用。",
+    400: "请求格式或模型参数不兼容；请检查接口类型、模型及工具调用支持。",
     401: "密钥无效或已过期，请用 /config 更新当前服务商的密钥。",
     403: "当前密钥没有访问该接口或模型的权限。",
     404: "接口或模型不存在；请检查 Base URL 和模型名称。",
@@ -20,6 +22,7 @@ ERRORS = {
     502: "服务商网关错误，请稍后再试。",
     503: "服务商暂时不可用，请稍后再试。",
     504: "服务商网关超时，请稍后再试。",
+    529: "Anthropic 服务暂时过载，请稍后再试。",
 }
 
 
@@ -33,7 +36,11 @@ class ChatClient:
 
     def request(self, endpoint, payload=None):
         body = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
-        headers = {"Authorization": "Bearer " + self.config.api_key, "Accept": "application/json"}
+        headers = {"Accept": "application/json"}
+        if self.config.protocol == "anthropic":
+            headers.update({"x-api-key": self.config.api_key, "anthropic-version": self.config.anthropic_version})
+        else:
+            headers["Authorization"] = "Bearer " + self.config.api_key
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(self.config.base_url + endpoint, data=body, headers=headers)
@@ -48,7 +55,7 @@ class ChatClient:
                 status = exc.code
                 retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
                 exc.close()
-                if status in {429, 500, 502, 503, 504} and attempt < 2:
+                if status in {429, 500, 502, 503, 504, 529} and attempt < 2:
                     delay = min(float(retry_after), 5) if retry_after.isascii() and retry_after.isdigit() else 2 ** attempt
                     print(f"API 暂时返回 HTTP {status}，{delay:g} 秒后重试（{attempt + 1}/2）…", file=sys.stderr)
                     time.sleep(delay)
@@ -60,6 +67,9 @@ class ChatClient:
                 raise RuntimeError("接口未返回有效 JSON，可能填写了网页地址。请检查 API Base URL。") from None
 
     def complete(self, messages, tools, tool_choice="auto"):
+        if self.config.protocol == "anthropic":
+            body = anthropic.payload(self.config, messages, tools, tool_choice)
+            return anthropic.response(self.request("/messages", body))
         payload = {"model": self.config.model, "messages": messages}
         if tools:
             payload.update(tools=tools, tool_choice=tool_choice)
@@ -78,7 +88,7 @@ class ChatClient:
             raise RuntimeError("API 响应格式不兼容，预期 Chat Completions 消息。") from None
 
     def models(self):
-        data = self.request("/models")
+        data = self.request("/models?limit=1000" if self.config.protocol == "anthropic" else "/models")
         try:
             entries = data["data"]
             if not isinstance(entries, list):
@@ -90,8 +100,8 @@ class ChatClient:
     def test(self):
         tool = {"type": "function", "function": {"name": "connection_check", "description": "Check API tool-call support without operating the computer.",
                 "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}}
-        reply = self.complete([{"role": "user", "content": "Call connection_check with empty arguments."}],
-                              [tool], {"type": "function", "function": {"name": "connection_check"}})
+        choice = "auto" if self.config.protocol == "anthropic" else {"type": "function", "function": {"name": "connection_check"}}
+        reply = self.complete([{"role": "user", "content": "Call connection_check with empty arguments."}], [tool], choice)
         for call in reply.get("tool_calls") or []:
             function = call.get("function") if isinstance(call, dict) else None
             if isinstance(function, dict) and function.get("name") == "connection_check":

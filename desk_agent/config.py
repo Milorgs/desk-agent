@@ -51,6 +51,10 @@ def write_store(active, profiles, keys):
         text += "\n[profiles." + json.dumps(name) + "]\n"
         text += "base_url = " + json.dumps(profile["base_url"]) + "\n"
         text += "model = " + json.dumps(profile["model"]) + "\n"
+        text += "protocol = " + json.dumps(profile.get("protocol", "openai")) + "\n"
+        if profile.get("protocol") == "anthropic":
+            text += "max_tokens = " + str(profile.get("max_tokens", 4096)) + "\n"
+            text += "anthropic_version = " + json.dumps(profile.get("anthropic_version", "2023-06-01")) + "\n"
     # Write credentials first: a newly added profile must not become active without its key.
     private_write(auth_path(), json.dumps({"profiles": keys}) + "\n")
     private_write(config_path(), text)
@@ -61,10 +65,13 @@ def check_profile_name(name):
         raise ValueError("服务商配置名请用 1–40 位字母、数字、短横线或下划线。")
 
 
-def normalize_url(value):
+def normalize_url(value, protocol="openai"):
     value = value.strip().rstrip("/")
-    if value.endswith("/chat/completions"):
-        value = value[:-len("/chat/completions")]
+    suffix = "/messages" if protocol == "anthropic" else "/chat/completions"
+    if value.endswith(suffix):
+        value = value[:-len(suffix)]
+    if protocol == "anthropic" and not urlsplit(value).path:
+        value += "/v1"
     return value
 
 
@@ -74,9 +81,12 @@ class Config:
     model: str
     api_key: str
     profile: str = "default"
+    protocol: str = "openai"
+    max_tokens: int = 4096
+    anthropic_version: str = "2023-06-01"
 
     def __post_init__(self):
-        self.base_url = normalize_url(self.base_url)
+        self.base_url = normalize_url(self.base_url, self.protocol)
 
     @classmethod
     def load(cls, profile=None, *, use_env=True):
@@ -89,7 +99,9 @@ class Config:
             return (os.environ.get(env) or fallback) if use_env else fallback
         return cls(value("DESK_BASE_URL", entry.get("base_url", "https://api.openai.com/v1")),
                    value("DESK_MODEL", entry.get("model", "")),
-                   value("DESK_API_KEY", keys.get(name, "")), name)
+                   value("DESK_API_KEY", keys.get(name, "")), name,
+                   value("DESK_API_TYPE", entry.get("protocol", "openai")),
+                   entry.get("max_tokens", 4096), entry.get("anthropic_version", "2023-06-01"))
 
     @classmethod
     def profiles(cls):
@@ -108,12 +120,20 @@ class Config:
         self.validate()
         check_profile_name(self.profile)
         _, profiles, keys = read_store()
-        profiles[self.profile] = {"base_url": self.base_url, "model": self.model}
+        profiles[self.profile] = {"base_url": self.base_url, "model": self.model,
+                                  "protocol": self.protocol, "max_tokens": self.max_tokens,
+                                  "anthropic_version": self.anthropic_version}
         keys[self.profile] = self.api_key
         write_store(self.profile, profiles, keys)
 
     def validate(self):
         check_profile_name(self.profile)
+        if self.protocol not in {"openai", "anthropic"}:
+            raise ValueError("接口类型只能是 openai 或 anthropic。")
+        if type(self.max_tokens) is not int or not 1 <= self.max_tokens <= 65536:
+            raise ValueError("max_tokens 必须是 1–65536 的整数。")
+        if not isinstance(self.anthropic_version, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", self.anthropic_version):
+            raise ValueError("anthropic_version 必须是 YYYY-MM-DD 格式。")
         url = urlsplit(self.base_url)
         if url.username or url.password or url.query or url.fragment:
             raise ValueError("API 地址不能包含账号、密码、查询参数或片段。")
@@ -123,8 +143,8 @@ class Config:
             raise ValueError("API 必须使用 HTTPS；仅本机服务允许 HTTP。")
         if not url.hostname:
             raise ValueError("API 地址缺少主机名。")
-        if url.path.endswith("/responses") or url.path.endswith("/messages"):
-            raise ValueError("当前支持 Chat Completions 协议，请填写兼容接口的 Base URL。")
+        if url.path.endswith(("/responses", "/messages", "/chat/completions")):
+            raise ValueError("地址与接口类型不匹配，请检查 /config 中的接口类型和 API 地址。")
         if not self.model or not self.model.strip():
             raise ValueError("尚未配置模型，请运行 desk 或 desk config。")
         if not self.api_key or not self.api_key.strip():

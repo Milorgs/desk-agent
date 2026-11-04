@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import uuid
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 from . import __version__
@@ -65,7 +66,13 @@ def configure(profile=None, *, new=False):
         else:
             current = Config.load(profile, use_env=profile is None)
     print("\n配置模型 · 密钥输入不显示，保存在本机权限为 600 的文件中。")
-    base = input(f"API 地址 [{current.base_url}]：").strip() or current.base_url
+    protocol = input(f"接口类型 [{current.protocol}]（openai / anthropic）：").strip().lower() or current.protocol
+    protocol = {"1": "openai", "2": "anthropic"}.get(protocol, protocol)
+    if protocol not in {"openai", "anthropic"}:
+        raise ValueError("接口类型请输入 openai 或 anthropic。")
+    default_base = current.base_url if protocol == current.protocol else (
+        "https://api.anthropic.com/v1" if protocol == "anthropic" else "https://api.openai.com/v1")
+    base = input(f"API 地址 [{default_base}]：").strip() or default_base
     model = input(f"模型名称 [{current.model or '必填'}]：").strip() or current.model
     old_url, new_url = urlsplit(current.base_url), urlsplit(base)
     same_host = (old_url.scheme, old_url.hostname, old_url.port) == (new_url.scheme, new_url.hostname, new_url.port)
@@ -73,7 +80,7 @@ def configure(profile=None, *, new=False):
     if current.api_key and not same_host:
         print("API 主机已改变，请输入新服务商的密钥。")
     key = getpass.getpass("API Key" + (" [回车保留]" if previous_key else "") + "：").strip() or previous_key
-    config = Config(base.rstrip("/"), model, key, current.profile)
+    config = replace(current, base_url=base, model=model, api_key=key, protocol=protocol)
     config.save()
     print(f"已保存。之后直接输入 desk 即可。\n配置：{config_path()}\n密钥：{auth_path()}")
     return config
@@ -116,7 +123,7 @@ def record(agent, config):
 
 def status(config, tools, args):
     print(f"\n  desk {__version__}  ·  {config.profile} / {config.model}\n  {tools.root}")
-    print(f"  API：{config.base_url}")
+    print(f"  接口：{config.protocol}  API：{config.base_url}")
     print(f"  命令：{'开启' if args.allow_shell else '关闭'}  桌面：{'开启' if args.allow_desktop else '关闭'}  操作：{'自动批准' if args.yes else '执行前确认'}")
 
 
@@ -150,7 +157,7 @@ def chat(agent, config, tools, args):
                 if not profiles:
                     print("尚无已保存服务商；使用 /provider add 名称 添加。")
                 for name, entry in profiles.items():
-                    print(f"{'*' if name == config.profile else ' '} {name}  {entry['model']}  {entry['base_url']}")
+                    print(f"{'*' if name == config.profile else ' '} {name}  [{entry.get('protocol', 'openai')}]  {entry['model']}  {entry['base_url']}")
             elif task.startswith("/provider "):
                 parts = task.split()
                 if len(parts) == 3 and parts[1] == "add":
@@ -175,7 +182,7 @@ def chat(agent, config, tools, args):
                 if not model:
                     print("请输入完整模型名称。")
                     continue
-                selected = Config(config.base_url, model, config.api_key, config.profile)
+                selected = replace(config, model=model)
                 selected.save()
                 config = selected
                 tools.desktop.refs.clear()
