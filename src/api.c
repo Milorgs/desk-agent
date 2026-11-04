@@ -56,7 +56,12 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         headers=curl_slist_append(headers,"Accept: application/json");
         headers=curl_slist_append(headers,"Content-Type: application/json");
         char *auth=NULL;
-        asprintf(&auth,native?"x-api-key: %s":"Authorization: Bearer %s",sget(c,"api_key"));
+        if(asprintf(&auth,native?"x-api-key: %s":"Authorization: Bearer %s",sget(c,"api_key"))<0){
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(h);
+            seterr(a,"无法分配请求头内存。");
+            return NULL;
+        }
         headers=curl_slist_append(headers,auth);
         free(auth);
         if(native){

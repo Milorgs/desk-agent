@@ -152,7 +152,10 @@ static J *file_write(App *a,J *args){
         return err("文件已变化，或覆盖前未读取，请重新读取文件。");
     }
     char *description=NULL;
-    asprintf(&description,"写入 %s（%zu 字节）\n%s",path,n,content);
+    if(asprintf(&description,"写入 %s（%zu 字节）\n%s",path,n,content)<0){
+        free(old);
+        return err("无法分配写入预览内存，原文件未修改。");
+    }
     int allowed=approve(a,description);
     free(description);
     if(!allowed){

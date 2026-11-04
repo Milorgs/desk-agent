@@ -11,8 +11,12 @@ void reset_session(App *a){
     J *m=obj();
     put(m,"role",str("system"));
     char *text=NULL;
-    asprintf(&text,"%s\n工作目录：%s",system_prompt,a->root);
-    put(m,"content",str(text));
+    if(asprintf(&text,"%s\n工作目录：%s",system_prompt,a->root)<0){
+        text=NULL;
+        put(m,"content",str(system_prompt));
+    }else{
+        put(m,"content",str(text));
+    }
     free(text);
     add(a->messages,m);
     a->state="等待任务";
