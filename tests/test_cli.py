@@ -38,7 +38,7 @@ class CliTests(unittest.TestCase):
     def test_first_run_menu_saves_once_and_starts_chat(self):
         output = io.StringIO()
         with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=[
-            "3", "1", "default", "https://example.com/v1", "my-model", "1", "/exit"
+            "3", "1", "default", "https://example.com/v1", "my-model", "2", "1", "/exit"
         ]), patch("getpass.getpass", return_value="private-test-key"), redirect_stdout(output):
             self.assertEqual(main(["--workspace", str(self.root)]), 0)
         self.assertEqual(Config.load().model, "my-model")
@@ -88,7 +88,7 @@ class CliTests(unittest.TestCase):
         prefix = self.root / "prefix with spaces"
         subprocess.run([sys.executable, str(source / "install.py"), "--prefix", str(prefix)], check=True, capture_output=True)
         result = subprocess.run([str(prefix / "bin/desk"), "--version"], cwd="/tmp", check=True, capture_output=True, text=True)
-        self.assertEqual(result.stdout.strip(), "0.5.1")
+        self.assertEqual(result.stdout.strip(), "0.6.0")
         self.assertFalse((self.root / ".bashrc").exists())
 
 

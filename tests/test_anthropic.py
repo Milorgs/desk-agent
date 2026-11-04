@@ -153,7 +153,7 @@ class NativeConfigTests(unittest.TestCase):
         self.assertEqual(Config.load("other").protocol, "openai")
 
     def test_native_wizard_selects_correct_default_url(self):
-        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["anthropic", "", "claude-test"]), patch(
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["anthropic", "", "claude-test", "2"]), patch(
             "getpass.getpass", return_value="native-key"
         ), redirect_stdout(io.StringIO()):
             config = configure("claude", new=True)

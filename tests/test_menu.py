@@ -59,7 +59,7 @@ class MenuTests(unittest.TestCase):
 
     def test_add_accepts_chinese_name_and_numbered_anthropic_protocol(self):
         with patch("getpass.getpass", return_value="native-key"), patch("desk_agent.api.ChatClient.request") as request:
-            output = self.run_menu(["3", "2", "日常助手", "", "claude-test", "0"])
+            output = self.run_menu(["3", "2", "日常助手", "", "claude-test", "2", "0"])
         config = Config.load()
         self.assertEqual((config.profile, config.protocol), ("日常助手", "anthropic"))
         self.assertEqual(config.base_url, "https://api.anthropic.com/v1")
