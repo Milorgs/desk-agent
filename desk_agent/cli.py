@@ -52,7 +52,20 @@ def parser():
     return p
 
 
-def configure(profile=None, *, new=False):
+def choose_protocol(current="openai"):
+    print("\n  [1] OpenAI\n  [2] Anthropic\n  [0] 退出")
+    default = "2" if current == "anthropic" else "1"
+    while True:
+        choice = input(f"\n请选择 [{default}]：").strip().lower() or default
+        if choice == "0":
+            return None
+        protocol = {"1": "openai", "2": "anthropic", "openai": "openai", "anthropic": "anthropic"}.get(choice)
+        if protocol:
+            return protocol
+        print("请输入 1、2 或 0。")
+
+
+def configure(profile=None, *, new=False, protocol=None):
     if not sys.stdin.isatty():
         raise ValueError("首次配置需要交互终端，请运行 desk config；自动化场景可设置 DESK_BASE_URL、DESK_MODEL、DESK_API_KEY。")
     if new:
@@ -66,12 +79,13 @@ def configure(profile=None, *, new=False):
             current.profile = profile
         else:
             current = Config.load(profile, use_env=profile is None)
-    print("\n配置模型 · 密钥输入不显示，保存在本机权限为 600 的文件中。")
-    print("  [1] OpenAI 兼容接口\n  [2] Anthropic 原生接口")
-    protocol = input(f"接口类型 [{current.protocol}]（openai / anthropic）：").strip().lower() or current.protocol
-    protocol = {"1": "openai", "2": "anthropic"}.get(protocol, protocol)
+    if protocol is None:
+        protocol = choose_protocol(current.protocol)
+    if protocol is None:
+        return None
     if protocol not in {"openai", "anthropic"}:
-        raise ValueError("接口类型请输入 openai 或 anthropic。")
+        raise ValueError("不支持的接口类型。")
+    print("\n配置模型 · 密钥输入不显示，保存在本机权限为 600 的文件中。")
     default_base = current.base_url if protocol == current.protocol else (
         "https://api.anthropic.com/v1" if protocol == "anthropic" else "https://api.openai.com/v1")
     base = input(f"API 地址 [{default_base}]：").strip() or default_base
@@ -153,7 +167,10 @@ def chat(agent, config, tools, args):
                 agent = Agent(agent.client, tools, max_steps=args.max_steps)
                 print("已开始新对话。")
             elif task == "/config":
-                config = configure(config.profile)
+                selected = configure(config.profile)
+                if selected is None:
+                    continue
+                config = selected
                 agent = Agent(ChatClient(config), tools, max_steps=args.max_steps)
                 print("新配置已启用，对话已重置。")
             elif task == "/provider":
@@ -170,6 +187,8 @@ def chat(agent, config, tools, args):
                     selected = Config.activate(parts[1])
                 else:
                     print("用法：/provider 名称 或 /provider add 名称")
+                    continue
+                if selected is None:
                     continue
                 config = selected
                 tools.desktop.refs.clear()
@@ -284,6 +303,9 @@ def menu(args, tools):
                     tools.desktop.refs.clear()
                     print(f"已选用 {config.profile} / {config.model}，下一次对话将使用该模型。")
             elif choice == "3":
+                protocol = choose_protocol()
+                if protocol is None:
+                    continue
                 profiles = Config.profiles()[1]
                 number = 1
                 while f"model-{number}" in profiles:
@@ -291,7 +313,7 @@ def menu(args, tools):
                 name = input(f"模型配置名称 [model-{number}]（输入 0 返回）：").strip()
                 if name == "0":
                     continue
-                selected = configure(name or f"model-{number}", new=True)
+                selected = configure(name or f"model-{number}", new=True, protocol=protocol)
                 config, agent = selected, None
                 tools.desktop.refs.clear()
                 print(f"已添加并选用 {config.profile} / {config.model}。")
@@ -335,6 +357,8 @@ def main(argv=None):
             config.validate()
         except ValueError:
             config = configure(args.provider)
+            if config is None:
+                return 0
         agent = Agent(ChatClient(config), tools, max_steps=args.max_steps)
         if args.task:
             status(config, tools, args)

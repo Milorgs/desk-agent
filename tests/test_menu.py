@@ -59,7 +59,7 @@ class MenuTests(unittest.TestCase):
 
     def test_add_accepts_chinese_name_and_numbered_anthropic_protocol(self):
         with patch("getpass.getpass", return_value="native-key"), patch("desk_agent.api.ChatClient.request") as request:
-            output = self.run_menu(["3", "日常助手", "2", "", "claude-test", "0"])
+            output = self.run_menu(["3", "2", "日常助手", "", "claude-test", "0"])
         config = Config.load()
         self.assertEqual((config.profile, config.protocol), ("日常助手", "anthropic"))
         self.assertEqual(config.base_url, "https://api.anthropic.com/v1")
@@ -85,6 +85,34 @@ class MenuTests(unittest.TestCase):
     def test_interrupt_add_does_not_create_partial_configuration(self):
         self.run_menu(["3", KeyboardInterrupt(), "0"])
         self.assertFalse(Config.profiles()[1])
+
+    def test_protocol_exit_cancels_before_name_and_key_and_preserves_selection(self):
+        self.save_two()
+        with patch("getpass.getpass") as key, patch("desk_agent.api.ChatClient.request") as request:
+            self.run_menu(["3", "0", "0"])
+        self.assertEqual(Config.load().profile, "two")
+        self.assertEqual(len(Config.profiles()[1]), 2)
+        key.assert_not_called()
+        request.assert_not_called()
+
+    def test_cancel_config_keeps_current_chat_context(self):
+        self.save_two()
+        observed = []
+        def complete(client, messages, tools):
+            observed.append((client.config.profile, len(messages)))
+            return {"role": "assistant", "content": "完成"}
+        with patch("getpass.getpass") as key, patch("desk_agent.api.ChatClient.complete", autospec=True, side_effect=complete):
+            self.run_menu(["1", "问题一", "/config", "0", "追问", "/exit"])
+        self.assertEqual(observed, [("two", 2), ("two", 4)])
+        key.assert_not_called()
+
+    def test_cancel_first_run_single_task_configuration_exits_cleanly(self):
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["0"]), patch(
+            "desk_agent.api.ChatClient.request"
+        ) as request, redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["--workspace", str(self.root), "一次性任务"]), 0)
+        self.assertFalse(Config.profiles()[1])
+        request.assert_not_called()
 
     def test_existing_model_can_start_with_enter(self):
         Config("https://example.com/v1", "model", "key").save()
