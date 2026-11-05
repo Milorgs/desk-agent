@@ -338,16 +338,24 @@ static void show_token_usage(J *usage,J *config){
 }
 static void show_banner(){
     constexpr int banner_width=64;
+    const bool color=terminal_supports_color();
+    const char *reset=color?"\033[0m":"";
     if(terminal_columns()<=banner_width){
-        printf("\n  desk-agent %s\n",VERSION);
+        printf("\n  %sdesk%s-agent %s\n",color?"\033[3;94m":"",reset,VERSION);
         return;
     }
-    fputs("\n"
-            "      _              _                                      _\n"
-            "   __| |  ___   ___ | |__        __ _   __ _   ___   _ _   | |_\n"
-            "  / _` | / -_) (_-< | / /  ___  / _` | / _` | / -_) | ' \\  |  _|\n"
-            "  \\__,_| \\___| /__/ |_\\_\\ |___| \\__,_| \\__, | \\___| |_||_|  \\__|\n"
-            "                                       |___/\n",stdout);
+    constexpr int desk_width=24;
+    constexpr struct {const char *desk;const char *agent;} logo[]={
+        {"       __          __",""},
+        {"  ____/ /__  _____/ /__","                                   _"},
+        {" / __  / _ \\/ ___/ //_/","       __ _   __ _   ___   _ _   | |_"},
+        {"/ /_/ /  __(__  ) ,<"," ___  / _` | / _` | / -_) | ' \\  |  _|"},
+        {"\\__,_/\\___/____/_/|_|","|___| \\__,_| \\__, | \\___| |_||_|  \\__|"},
+        {"","             |___/"},
+    };
+    const char *blue=color?"\033[94m":"";
+    putchar('\n');
+    for(const auto &row:logo)printf("  %s%-*s%s%s\n",blue,desk_width,row.desk,reset,row.agent);
     printf("  v%s\n\n",VERSION);
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){

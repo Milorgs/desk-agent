@@ -21,6 +21,20 @@ int terminal_columns(){
     return ioctl(STDOUT_FILENO,TIOCGWINSZ,&size)==0?size.ws_col:0;
 #endif
 }
+bool terminal_supports_color(){
+    const char *no_color=env_value("NO_COLOR");
+    if(no_color&&*no_color)return false;
+#ifdef _WIN32
+    HANDLE output=GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode=0;
+    if(!GetConsoleMode(output,&mode))return false;
+    constexpr DWORD vt=ENABLE_PROCESSED_OUTPUT|ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    return (mode&vt)==vt||SetConsoleMode(output,mode|vt);
+#else
+    const char *term=env_value("TERM");
+    return isatty(STDOUT_FILENO)&&term&&*term&&strcmp(term,"dumb")!=0;
+#endif
+}
 #ifdef _WIN32
 std::wstring wide(std::string_view value){
     if(value.empty())return {};
