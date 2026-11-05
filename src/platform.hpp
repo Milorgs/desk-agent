@@ -13,6 +13,7 @@ bool path_inside(const fs::path &root,const fs::path &path);
 bool path_link(const fs::path &path);
 void platform_initialize();
 int terminal_columns();
+bool terminal_supports_ansi();
 bool terminal_supports_color();
 const char *env_value(const char *name);
 #ifdef _WIN32

@@ -17,6 +17,23 @@ static void on_signal(int number){
     interrupted=number;
 }
 #endif
+// One alternate screen owns every interactive page, including the main menu.
+static bool interface_active=false;
+static int content_top=1;
+static void clear_page(){
+    if(interface_active){printf("\033[%d;1H\033[J",content_top);fflush(stdout);}
+}
+class InterfaceScreen {
+public:
+    InterfaceScreen(){
+        interface_active=terminal_supports_ansi();
+        if(interface_active){fputs("\033[?1049h\033[r\033[2J\033[H",stdout);fflush(stdout);}
+    }
+    ~InterfaceScreen(){
+        if(interface_active){fputs("\033[r\033[0m\033[?1049l",stdout);fflush(stdout);}
+        interface_active=false;content_top=1;
+    }
+};
 static void status(App *a){
     printf(tr("\n  desk-agent %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
     printf(tr("  推理模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")));
@@ -28,6 +45,7 @@ static char *field(const char *name,const char *fallback,bool secret){
     return input(prompt,fallback,secret);
 }
 static const char *choose_protocol(const char *current){
+    clear_page();
     puts(tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"));
     const char *fallback=!strcmp(current,"anthropic")?"2":"1";
     for(;;){
@@ -138,6 +156,7 @@ static int add_model(App *a,const char *preset){
 }
 static int number(Tasks &jobs,int maximum);
 static int select_model(App *a,Tasks &jobs){
+    clear_page();
     J *profiles=get(a->store,"profiles");
     if(!json_object_object_length(profiles)){
         puts(tr("尚未保存模型，请选择 [3] 添加模型。"));
@@ -183,12 +202,14 @@ static std::string request_text(Tasks &jobs,const char *prompt){
     return text?text.get():"";
 }
 static void language_menu(App *a,Tasks &jobs){
+    clear_page();
     puts(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
     int choice=number(jobs,2);
     if(choice==1)save_language(*a,"zh");
     else if(choice==2)save_language(*a,"en");
 }
 static void model_id_menu(App *a,Tasks &jobs){
+    clear_page();
     puts(tr("\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回"));
     int choice=number(jobs,2);std::string model;
     if(choice==1){
@@ -205,6 +226,7 @@ static void model_id_menu(App *a,Tasks &jobs){
     else puts(tr("已保存新模型并清空对话。"));
 }
 static void approval_menu(App *a,Tasks &jobs){
+    clear_page();
     puts(tr("\n批准模式\n  [1] 请求批准\n  [2] 帮我批准\n  [3] 完全访问权限\n  [0] 返回"));
     puts(tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。"));
     int selected=number(jobs,3);if(selected<=0)return;
@@ -212,6 +234,7 @@ static void approval_menu(App *a,Tasks &jobs){
     printf(tr("批准模式：%s（本次运行）\n"),permission_name(*a));
 }
 static void reasoning_menu(App *a,Tasks &jobs){
+    clear_page();
     bool native=!strcmp(sget(a->config,"protocol"),"anthropic");
     const char *openai[]={"none","minimal","low","medium","high","xhigh"};
     const char *anthropic[]={"none","low","medium","high","xhigh","max"};
@@ -228,11 +251,13 @@ static void reasoning_menu(App *a,Tasks &jobs){
     else printf(tr("已保存推理模式：%s；保留当前对话。\n"),reasoning_name(sget(a->config,"reasoning_effort")));
 }
 static void settings_menu(App *a,Tasks &jobs){
+    clear_page();
     for(;;){
         puts(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));
         int choice=number(jobs,7);if(choice<=0)return;
         if(choice==1)language_menu(a,jobs);
         else if(choice==2){
+            clear_page();
             puts(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
             if(selected==1){a->desktop=true;puts(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
             else if(selected==2){a->desktop=false;desktop_clear(a);puts(tr("桌面工具已关闭。"));}
@@ -333,16 +358,17 @@ public:
     Conversation *current=nullptr;
     ConversationScreen(App &a,Tasks &tasks,std::vector<Conversation> &list):app(a),jobs(tasks),items(list),previous(std::move(tasks.on_idle)){
         struct winsize size{};
-        pinned=isatty(1)&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>=10&&size.ws_col>=40;
+        pinned=interface_active&&isatty(1)&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>=10&&size.ws_col>=40;
         const char *term=env_value("TERM");
         pinned=pinned&&term&&strcmp(term,"dumb");
-        if(pinned){rows=size.ws_row;columns=size.ws_col;printf("\033[?1049h\033[2J\033[6;%dr\033[6;1H",rows);}
+        if(pinned){rows=size.ws_row;columns=size.ws_col;content_top=6;printf("\033[2J\033[6;%dr\033[6;1H",rows);}
         jobs.on_idle=[this]{if(previous)previous();tick();};
         tick();
     }
     ~ConversationScreen(){
         jobs.on_idle=std::move(previous);
-        if(pinned)fputs("\033[r\033[?1049l",stdout);
+        if(pinned)fputs("\033[r",stdout);
+        content_top=1;clear_page();
         fflush(stdout);
     }
     void tick(){
@@ -373,7 +399,8 @@ public:
         struct winsize size{};
         if(pinned&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>0&&size.ws_col>0&&(rows!=size.ws_row||columns!=size.ws_col)){
             rows=size.ws_row;columns=size.ws_col;
-            printf("\0337\033[%d;%dr\0338",rows>=10&&columns>=40?6:1,rows);last_header.clear();
+            content_top=rows>=10&&columns>=40?6:1;
+            printf("\0337\033[%d;%dr\0338",content_top,rows);last_header.clear();
         }
         if(header==last_header)return;
         last_header=header;
@@ -413,12 +440,18 @@ public:
 };
 #endif
 static int chat_menu(App *a,Tasks &jobs){
+    clear_page();
     puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [0] 返回输入"));
     int choice=number(jobs,7);if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)settings_menu(a,jobs);
-    else if(choice==4)status(a);
+    else if(choice==4){
+        clear_page();
+        status(a);
+        puts(tr("  [0] 返回"));
+        number(jobs,0);
+    }
     else if(choice==5)reasoning_menu(a,jobs);
     else if(choice==6)approval_menu(a,jobs);
     else if(choice==7)return 2;
@@ -429,6 +462,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
     ,ConversationScreen *screen=nullptr
 #endif
 ){
+    clear_page();
     if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
     printf(tr("  工作目录：%s\n"),a->root);
     puts(tr("任务及工具结果会发送到配置的 API。"));
@@ -466,10 +500,21 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
         if(task.empty())continue;
         if(task=="/"){
             size_t revision=a->session_revision;
+            a->error[0]=0;
+#ifndef _WIN32
+            if(screen)screen->current=nullptr;
+#endif
             int selected=chat_menu(a,jobs);
+#ifndef _WIN32
+            if(screen){screen->current=conversation;if(conversation)conversation->displayed.clear();}
+#endif
             if(conversation&&revision!=a->session_revision)conversation->reset_context=true;
             if(selected<0||selected==2)return false;
             if(selected==3){if(conversation)return true;reset_session(a);}
+            clear_page();
+            if(a->error[0])fprintf(stderr,"%s\n",a->error);
+            if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
+            last_modes.clear();
             continue;
         }
         if(conversation&&conversation->title.empty())conversation->title=conversation_title(task,true);
@@ -518,6 +563,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
         const int create=count+1,rename=count+2,remove=count+3;
         int choice=create;
         if(!new_chat){
+            clear_page();
             puts(tr("\n选择对话（仅本次运行保留）"));
             if(items.empty())puts(tr("还没有对话。"));
             for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+1,title_of(items[i]));
@@ -575,6 +621,8 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
     }
 }
 static int menu(App *a){
+    InterfaceScreen interface;
+    std::string notice;
     Tasks jobs;
     std::vector<Conversation> conversations;
 #ifndef _WIN32
@@ -582,7 +630,9 @@ static int menu(App *a){
 #endif
     for(;;){
         if(input_closed)return 0;
+        clear_page();
         show_banner();
+        if(!notice.empty()){puts(notice.c_str());notice.clear();}
         puts(tr("  已导入的模型"));
         JsonPtr usage(load_tokens(*a));
         J *profiles=get(a->store,"profiles");
@@ -620,7 +670,7 @@ static int menu(App *a){
         else if(choice==2)rc=select_model(a,jobs);
         else if(choice==3)rc=add_model(a,nullptr);
         else if(choice==4)settings_menu(a,jobs);
-        if(rc)fprintf(stderr,"%s\n",a->error);
+        if(rc)notice=a->error;
         if(interrupted==SIGTERM)return 143;
     }
 }

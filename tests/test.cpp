@@ -1220,6 +1220,7 @@ static void test_background_conversations(){
     std::string output;
     CHECK(terminal_until(master,output,"[1] Start chat"));
     CHECK(output.find("Conversation activity")==std::string::npos);
+    CHECK(output.find("\033[?1049h")!=std::string::npos);
     type_terminal(master,output,"1\n1\nFirst conversation\n");
     CHECK(terminal_until(master,output,"Thinking..."));
     CHECK(terminal_until(master,output,"Running · First conversation"));
@@ -1246,7 +1247,7 @@ static void test_background_conversations(){
     CHECK(terminal_until(master,output,"[0] Main menu"));
     output.clear();type_terminal(master,output,"0\n");
     CHECK(terminal_until(master,output,"[1] Start chat"));
-    CHECK(output.find("\033[?1049l")!=std::string::npos);
+    CHECK(output.find("\033[?1049l")==std::string::npos);
     CHECK(output.find("Conversation activity")==std::string::npos);
     CHECK(write(master,"0\n",2)==2);
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);
