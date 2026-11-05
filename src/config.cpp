@@ -288,27 +288,39 @@ int store_load(App *a){
     }
     return 0;
 }
-int save_config(App *a,J *c,bool clear_session){
-    if(config_valid(a,c))return -1;
-    J *next=copy(a->store);
-    put(next,"active_profile",str(sget(c,"profile")));
-    put(get(next,"profiles"),sget(c,"profile"),copy(c));
+static int write_store(App *a,J *next){
     if(mkdirs(a->config_dir,0700)){
-        json_object_put(next);
         seterr(a,tr("无法创建私有配置目录。"));
         return -1;
     }
     char path[PATH_MAX];
     if(path_suffix(path,a->config_dir,"/settings.json")){
-        json_object_put(next);
         return -1;
     }
     const char *data=json_object_to_json_string_ext(next,JSON_C_TO_STRING_PRETTY);
     if(atomic_file(path,data,strlen(data),0600)){
-        json_object_put(next);
         seterr(a,tr("保存配置失败，原设置未替换。"));
         return -1;
     }
+    return 0;
+}
+int reorder_models(App *a,const std::vector<std::string> &order){
+    JsonPtr next(copy(a->store));
+    J *profiles=get(a->store,"profiles");
+    J *sorted=obj();
+    for(const auto &name:order)put(sorted,name.c_str(),copy(get(profiles,name.c_str())));
+    put(next.get(),"profiles",sorted);
+    if(write_store(a,next.get()))return -1;
+    json_object_put(a->store);
+    a->store=next.release();
+    return 0;
+}
+int save_config(App *a,J *c,bool clear_session){
+    if(config_valid(a,c))return -1;
+    J *next=copy(a->store);
+    put(next,"active_profile",str(sget(c,"profile")));
+    put(get(next,"profiles"),sget(c,"profile"),copy(c));
+    if(write_store(a,next)){json_object_put(next);return -1;}
     J *selected=copy(c);
     json_object_put(a->store);
     a->store=next;

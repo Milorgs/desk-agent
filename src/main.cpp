@@ -8,6 +8,7 @@
 #include <unistd.h>
 #endif
 #include <locale.h>
+#include <algorithm>
 
 #ifndef _WIN32
 static void on_signal(int number){
@@ -133,41 +134,36 @@ static int add_model(App *a,const char *preset){
     free(name);
     return rc;
 }
-static int select_model(App *a){
+static int number(Tasks &jobs,int maximum);
+static int select_model(App *a,Tasks &jobs){
     J *profiles=get(a->store,"profiles");
     if(!json_object_object_length(profiles)){
         puts(tr("尚未保存模型，请选择 [3] 添加模型。"));
         return 0;
     }
-    int index=1;
+    std::vector<std::string> order;
     puts(tr("\n选择模型："));
     json_object_object_foreach(profiles,name,entry){
-        printf("  [%d] %s / %s (%s)\n",index++,name,sget(entry,"model"),sget(entry,"protocol"));
+        order.emplace_back(name);
+        printf("  [%zu] %s / %s (%s)\n",order.size(),name,sget(entry,"model"),sget(entry,"protocol"));
     }
+    int count=static_cast<int>(order.size());
+    if(count>1)printf(tr("  [%d] 调整模型编号\n"),count+1);
     puts(tr("  [0] 返回"));
-    for(;;){
-        char *choice=input(tr("请选择编号："),"0",false);
-        if(!choice)return 0;
-        char *end=NULL;
-        long n=strtol(choice,&end,10);
-        bool valid=*choice&&end&&!*end&&n>=0&&n<index;
-        free(choice);
-        if(!valid){
-            puts(tr("请输入列表中的编号。"));
-            continue;
-        }
-        if(!n)return 0;
-        index=1;
-        json_object_object_foreach(profiles,alias,value){
-            (void)value;
-            if(index++==n){
-                char *selected=strdup(alias);
-                int rc=activate(a,selected);
-                free(selected);
-                return rc;
-            }
-        }
-    }
+    int selected=number(jobs,count+(count>1));
+    if(selected<=0)return 0;
+    if(selected<=count)return activate(a,order[static_cast<size_t>(selected-1)].c_str());
+
+    puts(tr("输入要调整的模型编号（0 返回）。"));
+    int from=number(jobs,count);
+    if(from<=0)return 0;
+    puts(tr("输入该模型的新编号（0 返回）。"));
+    int to=number(jobs,count);
+    if(to<=0||from==to)return 0;
+    auto source=order.begin()+(from-1),target=order.begin()+(to-1);
+    if(source<target)std::rotate(source,source+1,target+1);
+    else std::rotate(target,source,source+1);
+    return reorder_models(a,order);
 }
 static int number(Tasks &jobs,int maximum){
     for(;;){
@@ -304,7 +300,7 @@ static int chat_menu(App *a,Tasks &jobs){
     puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回选择对话\n  [0] 返回输入"));
     int choice=number(jobs,8);if(choice<=0)return 0;
     if(choice==1)return 3;
-    else if(choice==2){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
+    else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)task_menu(a,jobs);
     else if(choice==4)settings_menu(a,jobs);
     else if(choice==5)status(a);
@@ -336,22 +332,24 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr){
         if(run_task(a,task.c_str())&&!input_closed)fprintf(stderr,"%s\n",a->error);
     }
 }
-static void show_token_usage(const App &app,Tasks &jobs){
-    printf(tr("  本次运行 Token（接口报告）：%llu\n"),
-        static_cast<unsigned long long>(add_tokens(app.tokens,jobs.tokens())));
+static void show_token_usage(J *usage,J *config){
+    if(usage)printf(tr("  累计 Token（接口报告）：%llu\n"),static_cast<unsigned long long>(model_tokens(usage,config)));
+    else puts(tr("  无法读取累计 Token 用量。"));
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
+    constexpr int first_conversation=5;
     bool new_chat=false;
     while(interrupted!=SIGTERM&&!input_closed){
         int choice=1;
         if(!new_chat){
             puts(tr("\n选择对话（仅本次运行保留）"));
-            show_token_usage(*a,jobs);
+
             if(items.empty())puts(tr("还没有对话。"));
-            for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+4,title_of(items[i]));
-            puts(tr("\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [0] 返回主菜单\n  Ctrl+D 退出"));
-            choice=number(jobs,static_cast<int>(items.size()+3));
-            if(choice<=0)return;
+            for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+first_conversation,title_of(items[i]));
+            puts(tr("\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [4] 返回主菜单\n  [0] 退出"));
+            choice=number(jobs,static_cast<int>(items.size()+first_conversation-1));
+            if(choice<0||choice==4)return;
+            if(choice==0){input_closed=true;return;}
         }
         new_chat=false;
         if(choice==2||choice==3){
@@ -361,9 +359,9 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             }
             bool deleting=choice==3;
             puts(tr(deleting?"输入上方要删除的对话编号（0 返回）。":"输入上方要重命名的对话编号（0 返回）。"));
-            int which=number(jobs,static_cast<int>(items.size()+3));
-            if(which<4)continue;
-            auto item=items.begin()+(which-4);
+            int which=number(jobs,static_cast<int>(items.size()+first_conversation-1));
+            if(which<first_conversation)continue;
+            auto item=items.begin()+(which-first_conversation);
             if(deleting){
                 printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
                 if(number(jobs,1)==1)items.erase(item);
@@ -377,7 +375,8 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             if(config_valid(a,a->config)){puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
             items.push_back({{},JsonPtr(arr()),JsonPtr(copy(a->config))});
         }
-        auto &item=items[choice==1?items.size()-1:static_cast<size_t>(choice-4)];
+        auto selected=items.begin()+(choice==1?items.size()-1:static_cast<size_t>(choice-first_conversation));
+        auto &item=*selected;
         JsonPtr previous(a->messages);
         a->messages=item.messages.release();
         json_object_put(a->config);a->config=copy(item.config.get());
@@ -385,6 +384,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
         new_chat=chat(a,jobs,&item);
         item.messages.reset(a->messages);a->messages=previous.release();
         item.config.reset(copy(a->config));
+        std::rotate(items.begin(),selected,selected+1);
         if(interrupted==SIGTERM)return;
         // Terminal EOF closes the current chat. The selector gets a fresh input.
         input_closed=false;
@@ -398,23 +398,27 @@ static int menu(App *a){
         if(input_closed)return 0;
         printf("\n  desk %s\n",VERSION);
         puts(tr("  已导入的模型"));
+        JsonPtr usage(load_tokens(*a));
         J *profiles=get(a->store,"profiles");
         if(!json_object_object_length(profiles))puts(tr("    暂无已导入的模型"));
         else{
+            size_t index=1;
             json_object_object_foreach(profiles,name,profile){
-                printf("    %s / %s\n",name,sget(profile,"model"));
+                printf("    %zu. %s / %s",index++,name,sget(profile,"model"));
+                if(usage)printf(" · %llu Token",static_cast<unsigned long long>(model_tokens(usage.get(),profile)));
+                putchar('\n');
             }
         }
         if(*sget(a->config,"model"))printf(tr("  当前模型：%s / %s\n"),sget(a->config,"profile"),sget(a->config,"model"));
         else puts(tr("  当前模型：未配置"));
-        show_token_usage(*a,jobs);
+        if(*sget(a->config,"model")||!usage)show_token_usage(usage.get(),a->config);
         puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出"));
         int choice=number(jobs,6);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice){puts(tr("请按 Ctrl+D 退出。"));continue;}
         int rc=0;
         if(choice==1)conversation_menu(a,jobs,conversations);
-        else if(choice==2)rc=select_model(a);
+        else if(choice==2)rc=select_model(a,jobs);
         else if(choice==3)rc=add_model(a,nullptr);
         else if(choice==4)task_menu(a,jobs);
         else if(choice==5)settings_menu(a,jobs);

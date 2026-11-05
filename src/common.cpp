@@ -5,6 +5,7 @@
 #endif
 #include <openssl/rand.h>
 #include <chrono>
+#include <cerrno>
 #include <cstring>
 #include <cstdio>
 #include <stdexcept>
@@ -150,4 +151,35 @@ int approve(App *a,const char *description,Operation operation){
     task_event(*a,'r');
     if(yes&&!a->verbose)progress(a,tr("正在执行操作…"));
     return yes;
+}
+
+J *load_tokens(const App &app){
+    char path[PATH_MAX];
+    if(path_suffix(path,app.config_dir,"/token-usage.json"))return nullptr;
+    std::unique_ptr<char,decltype(&free)> data(read_bytes(path,1048576,nullptr),free);
+    if(!data)return errno==ENOENT?obj():nullptr;
+    JsonPtr usage(json_tokener_parse(data.get()));
+    return json_object_is_type(usage.get(),json_type_object)?usage.release():nullptr;
+}
+
+std::uint64_t model_tokens(J *usage,J *config){
+    return json_object_get_uint64(get(get(usage,sget(config,"profile")),sget(config,"model")));
+}
+
+bool record_tokens(App &app,J *config,std::uint64_t amount){
+    if(!amount)return true;
+    if(!*app.config_dir||mkdirs(app.config_dir,0700))return false;
+    ResourceLock lock(app.config_dir);
+    if(!lock.acquired())return false;
+    JsonPtr usage(load_tokens(app));
+    char path[PATH_MAX];
+    if(!usage||path_suffix(path,app.config_dir,"/token-usage.json"))return false;
+    const char *profile=sget(config,"profile");
+    J *models=get(usage.get(),profile);
+    if(!models){models=obj();put(usage.get(),profile,models);}
+    if(!json_object_is_type(models,json_type_object))return false;
+    auto total=add_tokens(model_tokens(usage.get(),config),amount);
+    put(models,sget(config,"model"),json_object_new_uint64(total));
+    const char *text=json_object_to_json_string_ext(usage.get(),JSON_C_TO_STRING_PLAIN);
+    return strlen(text)<=1048576&&atomic_file(path,text,strlen(text),0600)==0;
 }

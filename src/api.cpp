@@ -1,5 +1,4 @@
 #include "desk.hpp"
-#include "tasks.hpp"
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -291,13 +290,8 @@ J *api_complete(App *a,J *c,J *messages,J *tools){
     J *data=api_request(a,c,native?"/messages":"/chat/completions",body);
     json_object_put(body);
     if(!data)return NULL;
-    auto tokens=reported_tokens(get(data,"usage"),native);
-    a->tokens=add_tokens(a->tokens,tokens);
-    if(tokens&&a->task_events>=0){
-        char event[1+sizeof tokens]={'u'};
-        std::memcpy(event+1,&tokens,sizeof tokens);
-        task_event(*a,std::string_view(event,sizeof event));
-    }
+    if(!record_tokens(*a,c,reported_tokens(get(data,"usage"),native)))
+        fputs(tr("无法保存 Token 用量。\n"),stderr);
     J *result=NULL;
     if(native)result=native_response(a,data);
     else{

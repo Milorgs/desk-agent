@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.5.6"
+#define VERSION "1.5.7"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -34,7 +34,6 @@ struct App {
     std::intptr_t task_events=-1;
     const char *state="等待任务";
     void *desktop_data=nullptr;
-    std::uint64_t tokens=0;
 };
 extern std::atomic<int> interrupted;
 extern std::atomic<bool> input_closed;
@@ -57,6 +56,13 @@ J *at(J *j,size_t index);
 int iget(J *j,const char *key,int fallback);
 bool bget(J *j,const char *key);
 bool tool_failed(J *result);
+inline std::uint64_t add_tokens(std::uint64_t total,std::uint64_t amount){
+    return amount>UINT64_MAX-total?UINT64_MAX:total+amount;
+}
+J *load_tokens(const App &app);
+std::uint64_t model_tokens(J *usage,J *config);
+bool record_tokens(App &app,J *config,std::uint64_t amount);
+int reorder_models(App *app,const std::vector<std::string> &order);
 bool valid_utf8(std::string_view text) noexcept;
 void put(J *j,const char *key,J *value);
 void add(J *j,J *value);

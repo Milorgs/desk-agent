@@ -626,7 +626,7 @@ static void test_anthropic_loop(void){
     int result=run_task(&a,"native create and read");
     server_done(child);
     CHECK(result==0);
-    CHECK(a.tokens==26);
+    JsonPtr usage(load_tokens(a));CHECK(model_tokens(usage.get(),a.config)==26);
     J *r=capture(&a,1);
     CHECK(!get(r,"authorization"));
     CHECK(get(r,"key"));
@@ -912,7 +912,7 @@ static void leave_chat_and_exit(int master,bool english=true){
     std::string output;CHECK(terminal_until(master,output,picker));
     output.erase(0,output.find(picker));
     CHECK(terminal_until(master,output,english?"Select a number:":"请选择编号："));
-    CHECK(write(master,"\x04",1)==1);
+    CHECK(write(master,"0\n",2)==2);
 }
 static void test_numeric_request(void){
     App a=fresh();json_object_put(a.config);a.config=config("numeric","openai");
@@ -1001,7 +1001,7 @@ static void test_assisted_worker(void){
     {
         Tasks jobs("./build/desk");int id=jobs.start(a,"edit then ask for command approval");CHECK(id==1);
         a.auto_edit=false;a.yes=true;put(a.config,"reasoning_effort",str("low"));
-        CHECK(await_state(jobs,id,"等待确认"));CHECK(jobs.tokens()==40);char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/assisted.txt"));char *content=read_bytes(path,100,nullptr);CHECK(content&&!strcmp(content,"auto-approved"));free(content);
+        CHECK(await_state(jobs,id,"等待确认"));JsonPtr usage(load_tokens(a));CHECK(model_tokens(usage.get(),a.config)==40);char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/assisted.txt"));char *content=read_bytes(path,100,nullptr);CHECK(content&&!strcmp(content,"auto-approved"));free(content);
         CHECK(!path_suffix(path,a.root,"/command-must-wait.txt"));CHECK(access(path,F_OK)!=0);
         JsonPtr request(capture(&a,1));CHECK(!strcmp(sget(get(request.get(),"body"),"reasoning_effort"),"high"));
         CHECK(jobs.cancel(id));CHECK(await_state(jobs,id,"已取消"));CHECK(access(path,F_OK)!=0);
@@ -1157,20 +1157,21 @@ static void test_conversation_picker(void){
         execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
     }
     std::string output;
-    CHECK(terminal_until(master,output,"Tokens this run (reported by API): 0"));
+    CHECK(terminal_until(master,output,"Lifetime tokens (reported by API): 0"));
     CHECK(output.find("Imported models")!=std::string::npos);
     CHECK(output.find("alternate / alternate-model")!=std::string::npos);
     CHECK(output.find("Current model: conversation-picker / model-test")!=std::string::npos);
     type_terminal(master,output,"1\n1\n"+first+"\n");CHECK(terminal_until(master,output,"REPLY_ONE"));wait_for_chat_prompt(master,output,"REPLY_ONE");
     CHECK(write(master,"\x04",1)==1);output.clear();
-    CHECK(terminal_until(master,output,"4. 整理比赛资料"));CHECK(output.find("Tokens this run (reported by API): 12")!=std::string::npos);CHECK(terminal_until(master,output,"Select a number:"));
-    output.clear();type_terminal(master,output,"2\n4\n我的比赛笔记\n");
-    CHECK(terminal_until(master,output,"4. 我的比赛笔记"));
-    output.clear();type_terminal(master,output,"0\n2\n2\n1\n1\n"+second+"\n");CHECK(terminal_until(master,output,"REPLY_TWO"));wait_for_chat_prompt(master,output,"REPLY_TWO");
+    CHECK(terminal_until(master,output,"5. 整理比赛资料"));CHECK(terminal_until(master,output,"Select a number:"));
+    output.clear();type_terminal(master,output,"2\n5\n我的比赛笔记\n");
+    CHECK(terminal_until(master,output,"5. 我的比赛笔记"));
+    output.clear();type_terminal(master,output,"4\n2\n3\n2\n1\n2\n1\n1\n1\n"+second+"\n");CHECK(terminal_until(master,output,"REPLY_TWO"));wait_for_chat_prompt(master,output,"REPLY_TWO");
     CHECK(write(master,"\x04",1)==1);output.clear();
-    CHECK(terminal_until(master,output,"5. Draft a demo video"));CHECK(output.find("4. 我的比赛笔记")!=std::string::npos);
+    CHECK(terminal_until(master,output,"5. Draft a demo video"));
     CHECK(terminal_until(master,output,"[2] Rename conversation"));
-    CHECK(output.find("5. Draft a demo video")<output.find("[2] Rename conversation"));
+    CHECK(output.find("5. Draft a demo video")<output.find("6. 我的比赛笔记"));
+    CHECK(output.find("6. 我的比赛笔记")<output.find("[2] Rename conversation"));
     output.clear();type_terminal(master,output,"3\n5\n0\n");
     CHECK(terminal_until(master,output,"[1] Confirm deletion"));
     CHECK(terminal_until(master,output,"5. Draft a demo video"));
@@ -1179,9 +1180,8 @@ static void test_conversation_picker(void){
     auto after_delete=output.substr(output.find("Choose a conversation (this run only)"));
     CHECK(terminal_until(master,after_delete,"Select a number:"));
     CHECK(after_delete.find("Draft a demo video")==std::string::npos);
-    CHECK(after_delete.find("4. 我的比赛笔记")!=std::string::npos);
-    CHECK(after_delete.find("Tokens this run (reported by API): 30")!=std::string::npos);
-    output.clear();type_terminal(master,output,"4\n"+follow+"\n");
+    CHECK(after_delete.find("5. 我的比赛笔记")!=std::string::npos);
+    output.clear();type_terminal(master,output,"5\n"+follow+"\n");
     CHECK(terminal_until(master,output,"Conversation: 我的比赛笔记"));CHECK(terminal_until(master,output,"REPLY_RESUMED"));
     output.clear();type_terminal(master,output,"/\n1\n"+third+"\n");CHECK(terminal_until(master,output,"REPLY_FRESH"));wait_for_chat_prompt(master,output,"REPLY_FRESH");
     leave_chat_and_exit(master);
@@ -1197,7 +1197,11 @@ static void test_conversation_picker(void){
     }
     child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
-    output.clear();CHECK(write(master,"1\n",2)==2);
+    output.clear();
+    CHECK(terminal_until(master,output,"Lifetime tokens (reported by API):"));
+    CHECK(output.find("1. alternate / alternate-model · 18 Token")!=std::string::npos);
+    CHECK(output.find("2. conversation-picker / model-test · 12 Token")!=std::string::npos);
+    CHECK(write(master,"1\n",2)==2);
     CHECK(terminal_until(master,output,"Choose a conversation (this run only)"));
     auto tail=output.substr(output.find("Choose a conversation (this run only)"));
     CHECK(terminal_until(master,tail,"Select a number:"));CHECK(tail.find("我的比赛笔记")==std::string::npos);

@@ -6,7 +6,12 @@ namespace {
 bool english=false;
 struct Translation {const char *zh,*en;};
 constexpr Translation catalog[]={
-    {"  本次运行 Token（接口报告）：%llu\n","  Tokens this run (reported by API): %llu\n"},
+    {"无法保存 Token 用量。\n","Could not save token usage.\n"},
+    {"  无法读取累计 Token 用量。","  Could not read lifetime token usage."},
+    {"  [%d] 调整模型编号\n","  [%d] Renumber models\n"},
+    {"输入要调整的模型编号（0 返回）。","Enter the model number to move (0 to go back)."},
+    {"输入该模型的新编号（0 返回）。","Enter the new model number (0 to go back)."},
+    {"  累计 Token（接口报告）：%llu\n","  Lifetime tokens (reported by API): %llu\n"},
     {"  已导入的模型","  Imported models"},
     {"    暂无已导入的模型","    No imported models"},
     {"  当前模型：%s / %s\n","  Current model: %s / %s\n"},
@@ -15,7 +20,7 @@ constexpr Translation catalog[]={
     {"\n对话：%s\n","\nConversation: %s\n"},
     {"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。","Ctrl+D to return to conversations, Ctrl+C to stop the current operation, / for numbered actions."},
     {"\n选择对话（仅本次运行保留）","\nChoose a conversation (this run only)"},
-    {"\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [0] 返回主菜单\n  Ctrl+D 退出","\n  [1] New conversation\n  [2] Rename conversation\n  [3] Delete conversation\n  [0] Main menu\n  Ctrl+D to exit"},
+    {"\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [4] 返回主菜单\n  [0] 退出","\n  [1] New conversation\n  [2] Rename conversation\n  [3] Delete conversation\n  [4] Main menu\n  [0] Exit"},
     {"还没有对话。","No conversations yet."},
     {"输入上方要重命名的对话编号（0 返回）。","Enter a conversation number from above to rename it (0 to go back)."},
     {"输入上方要删除的对话编号（0 返回）。","Enter a conversation number from above to delete it (0 to go back)."},
