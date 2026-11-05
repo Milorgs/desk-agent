@@ -92,6 +92,16 @@ int atomic_file(const char *path,const void *data,size_t len,unsigned int mode){
     return rc;
 }
 namespace {
+// Consume the canonical EOF marker before switching the terminal to raw input.
+// Queued request text stays untouched.
+bool terminal_eof(){
+    if(!isatty(STDIN_FILENO))return false;
+    struct termios mode{};if(tcgetattr(STDIN_FILENO,&mode)||!(mode.c_lflag&ICANON))return false;
+    struct pollfd ready{STDIN_FILENO,POLLIN,0};int bytes=0;
+    if(poll(&ready,1,0)<=0||!(ready.revents&(POLLIN|POLLHUP))||ioctl(STDIN_FILENO,FIONREAD,&bytes)||bytes)return false;
+    char marker;
+    return read(STDIN_FILENO,&marker,1)==0;
+}
 struct EditorState {char *line=nullptr;bool done=false,installed=false;};
 EditorState *editor=nullptr;
 void accepted_line(char *line){
@@ -115,6 +125,7 @@ struct EditorSession {
 char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle){
     if(input_closed)return nullptr;
     if(!secret&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)){
+        if(terminal_eof()){input_closed=true;putchar('\n');return nullptr;}
         EditorSession session(prompt);
         struct winsize previous{};ioctl(STDOUT_FILENO,TIOCGWINSZ,&previous);
         while(!session.state.done&&!interrupted){
@@ -162,10 +173,6 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
 }
 char *input(const char *prompt,const char *fallback,bool secret){return editable_input(prompt,fallback,secret,{});}
 
-// Detect a canonical terminal EOF without consuming queued request text.
 void check_exit(const App &app){
-    if(app.task_events>=0||input_closed||!isatty(STDIN_FILENO))return;
-    struct termios mode{};if(tcgetattr(STDIN_FILENO,&mode)||!(mode.c_lflag&ICANON))return;
-    struct pollfd ready{STDIN_FILENO,POLLIN,0};int bytes=0;
-    if(poll(&ready,1,0)>0&&(ready.revents&(POLLIN|POLLHUP))&&!ioctl(STDIN_FILENO,FIONREAD,&bytes)&&bytes==0){input_closed=true;interrupted=SIGINT;}
+    if(app.task_events<0&&!input_closed&&terminal_eof()){input_closed=true;interrupted=SIGINT;}
 }

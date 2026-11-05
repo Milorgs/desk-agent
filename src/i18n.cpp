@@ -6,6 +6,15 @@ namespace {
 bool english=false;
 struct Translation {const char *zh,*en;};
 constexpr Translation catalog[]={
+    {"新对话","New conversation"},
+    {"\n对话：%s\n","\nConversation: %s\n"},
+    {"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。","Ctrl+D to return to conversations, Ctrl+C to stop the current operation, / for numbered actions."},
+    {"\n选择对话（仅本次运行保留）\n  [1] 新建对话\n  [2] 重命名对话","\nChoose a conversation (this run only)\n  [1] New conversation\n  [2] Rename conversation"},
+    {"  [0] 返回主菜单\n  Ctrl+D 退出","  [0] Main menu\n  Ctrl+D to exit"},
+    {"还没有对话。","No conversations yet."},
+    {"选择要重命名的对话：","Select a conversation to rename:"},
+    {"新标题（空行取消）：","New title (empty line to cancel): "},
+
     {"输入超过 64 KB，请缩短后重试。","Input exceeds 64 KB. Please shorten it and try again."},
     {"请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消：","Approval required: [1] Allow [2] Deny [3] Show full operation [0] Cancel: "},
     {"正在思考…","Thinking..."},
@@ -41,7 +50,7 @@ constexpr Translation catalog[]={
     {"推理档位与接口不兼容，请重新选择或恢复服务商默认。","Reasoning level is incompatible with this API. Select another level or restore the provider default."},
     {"接口或模型可能不支持所选推理档位或工具组合；请调整档位或恢复服务商默认。未自动降档或更换模型。","The API or model may not support this reasoning level or tool combination. Adjust the level or restore provider defaults. No automatic downgrade or model change was made."},
     {"\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回","\nSettings\n  [1] Interface language\n  [2] Desktop tools\n  [3] Approval mode\n  [4] Edit current model configuration\n  [5] Change model ID\n  [6] Connection test (uses API credits)\n  [7] Reasoning mode\n  [0] Back"},
-    {"\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回主菜单\n  [0] 返回输入","\nChat actions\n  [1] New conversation\n  [2] Select model\n  [3] Tasks\n  [4] Settings\n  [5] View status\n  [6] Reasoning mode\n  [7] Approval mode\n  [8] Main menu\n  [0] Back to request"},
+    {"\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回选择对话\n  [0] 返回输入","\nChat actions\n  [1] New conversation\n  [2] Select model\n  [3] Tasks\n  [4] Settings\n  [5] View status\n  [6] Reasoning mode\n  [7] Approval mode\n  [8] Back to conversations\n  [0] Back to request"},
     {"输入 0 或空行返回主菜单，输入 / 打开数字操作菜单。","Enter 0 or an empty line for the main menu, or / for numbered actions."},
     {"推理模式：%s · 批准模式：%s\n","Reasoning: %s · Approval: %s\n"},
     {"等待任务","Waiting for a task"},

@@ -274,10 +274,36 @@ static void task_menu(App *a,Tasks &jobs){
         if(interrupted==SIGTERM)return;
     }
 }
+struct Conversation {
+    std::string title;
+    JsonPtr messages,config;
+};
+static std::string conversation_title(std::string_view source,bool automatic){
+    if(!valid_utf8(source))return {};
+    auto first=source.find_first_not_of(" \t\r\n");
+    if(first==std::string_view::npos)return {};
+    source.remove_prefix(first);
+    if(automatic){
+        for(std::string_view prefix:{"请帮我","能帮我","帮我","请你","Please ","please ","Can you ","Could you "})
+            if(source.starts_with(prefix)&&source.size()>prefix.size()){source.remove_prefix(prefix.size());break;}
+    }
+    std::string title;bool gap=false;size_t count=0;
+    while(!source.empty()){
+        auto byte=static_cast<unsigned char>(source.front());
+        if(automatic&&!title.empty()&&(byte=='\n'||byte=='\r'||byte=='?'||byte=='!'||source.starts_with("。")||source.starts_with("？")||source.starts_with("！")))break;
+        if(byte<=32||byte==127){gap=!title.empty();source.remove_prefix(1);continue;}
+        size_t width=byte<0x80?1:byte<0xe0?2:byte<0xf0?3:4;
+        if(count+(gap?1:0)>=48){title+="…";break;}
+        if(gap){title+=' ';count++;gap=false;}
+        title.append(source.substr(0,width));source.remove_prefix(width);count++;
+    }
+    return title;
+}
+static const char *title_of(const Conversation &item){return item.title.empty()?tr("新对话"):item.title.c_str();}
 static int chat_menu(App *a,Tasks &jobs){
-    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回主菜单\n  [0] 返回输入"));
+    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回选择对话\n  [0] 返回输入"));
     int choice=number(jobs,8);if(choice<=0)return 0;
-    if(choice==1){reset_session(a);puts(tr("已开始新对话。"));}
+    if(choice==1)return 3;
     else if(choice==2){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)task_menu(a,jobs);
     else if(choice==4)settings_menu(a,jobs);
@@ -287,32 +313,82 @@ static int chat_menu(App *a,Tasks &jobs){
     else if(choice==8)return 2;
     return interrupted==SIGTERM?-1:1;
 }
-static int chat(App *a,Tasks &jobs){
+static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr){
+    if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
     status(a);
     puts(tr("任务及工具结果会发送到配置的 API。"));
-    puts(tr("Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+    puts(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
     for(;;){
-        if(input_closed||interrupted==SIGTERM)return 0;
+        if(input_closed||interrupted==SIGTERM)return false;
         if(interrupted==SIGINT)interrupted=0;
         printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
         std::unique_ptr<char,decltype(&free)> line(jobs.readline(": "),free);
-        if(!line){if(interrupted==SIGINT)continue;return 0;}
+        if(!line){if(interrupted==SIGINT&&!input_closed)continue;return false;}
         std::string task=line.get();
         if(task.empty())continue;
-        if(task=="/"){int selected=chat_menu(a,jobs);if(selected<0)return 0;if(selected==2)return 1;continue;}
+        if(task=="/"){
+            int selected=chat_menu(a,jobs);
+            if(selected<0||selected==2)return false;
+            if(selected==3){if(conversation)return true;reset_session(a);}
+            continue;
+        }
+        if(conversation&&conversation->title.empty())conversation->title=conversation_title(task,true);
         if(run_task(a,task.c_str())&&!input_closed)fprintf(stderr,"%s\n",a->error);
-        if(interrupted==SIGTERM)return 0;
+    }
+}
+static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
+    bool new_chat=false;
+    while(interrupted!=SIGTERM&&!input_closed){
+        int choice=1;
+        if(!new_chat){
+            puts(tr("\n选择对话（仅本次运行保留）\n  [1] 新建对话\n  [2] 重命名对话"));
+            for(size_t i=0;i<items.size();i++)printf("  [%zu] %s\n",i+3,title_of(items[i]));
+            puts(tr("  [0] 返回主菜单\n  Ctrl+D 退出"));
+            choice=number(jobs,static_cast<int>(items.size()+2));
+            if(choice<=0)return;
+        }
+        new_chat=false;
+        if(choice==2){
+            if(items.empty()){puts(tr("还没有对话。"));continue;}
+            puts(tr("选择要重命名的对话："));
+            for(size_t i=0;i<items.size();i++)printf("  [%zu] %s\n",i+1,title_of(items[i]));
+            puts(tr("  [0] 返回"));
+            int which=number(jobs,static_cast<int>(items.size()));
+            if(which>0){
+                auto title=conversation_title(request_text(jobs,tr("新标题（空行取消）：")),false);
+                if(!title.empty())items[static_cast<size_t>(which-1)].title=std::move(title);
+            }
+            continue;
+        }
+        if(choice==1){
+            if(config_valid(a,a->config)){puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
+            items.push_back({{},JsonPtr(arr()),JsonPtr(copy(a->config))});
+        }
+        auto &item=items[choice==1?items.size()-1:static_cast<size_t>(choice-3)];
+        JsonPtr previous(a->messages);
+        a->messages=item.messages.release();
+        json_object_put(a->config);a->config=copy(item.config.get());
+        a->state="等待任务";
+        new_chat=chat(a,jobs,&item);
+        item.messages.reset(a->messages);a->messages=previous.release();
+        item.config.reset(copy(a->config));
+        if(interrupted==SIGTERM)return;
+        // Terminal EOF closes the current chat. The selector gets a fresh input.
+        input_closed=false;
+        if(interrupted==SIGINT)interrupted=0;
     }
 }
 static int menu(App *a){
     Tasks jobs;
+    std::vector<Conversation> conversations;
     for(;;){
+        if(input_closed)return 0;
         printf(tr("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出\n"),VERSION,*sget(a->config,"model")?sget(a->config,"profile"):tr("未配置"),*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
         int choice=number(jobs,6);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice){puts(tr("请按 Ctrl+D 退出。"));continue;}
         int rc=0;
-        if(choice==1){if(config_valid(a,a->config))puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));else if(!chat(a,jobs))return 0;}
+        if(choice==1)conversation_menu(a,jobs,conversations);
         else if(choice==2)rc=select_model(a);
         else if(choice==3)rc=add_model(a,nullptr);
         else if(choice==4)task_menu(a,jobs);
