@@ -16,7 +16,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.5.1"
+#define VERSION "1.5.2"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -28,13 +28,17 @@ using JsonPtr = std::unique_ptr<J,JsonDeleter>;
 struct App {
     J *store=nullptr, *config=nullptr, *messages=nullptr;
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
-    bool yes=false, auto_edit=false, shell=true, desktop=false, record=false;
+    bool yes=false, auto_edit=false, shell=true, desktop=false, record=false, verbose=false, progress_visible=false;
     int max_steps=20;
     std::intptr_t task_events=-1;
     const char *state="等待任务";
     void *desktop_data=nullptr;
 };
 extern std::atomic<int> interrupted;
+extern std::atomic<bool> input_closed;
+void progress(App *app,const char *text);
+void check_exit(const App &app);
+void progress_clear(App *app);
 const char *tr(const char *text);
 const char *language_code();
 bool set_language(const char *code);

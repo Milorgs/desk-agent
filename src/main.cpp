@@ -25,7 +25,7 @@ static char *field(const char *name,const char *fallback,bool secret){
     return input(prompt,fallback,secret);
 }
 static const char *choose_protocol(const char *current){
-    puts(tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 退出"));
+    puts(tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"));
     const char *fallback=!strcmp(current,"anthropic")?"2":"1";
     for(;;){
         char *choice=field(tr("请选择"),fallback,false);
@@ -171,10 +171,10 @@ static int select_model(App *a){
 }
 static int number(Tasks &jobs,int maximum){
     for(;;){
-        if(interrupted==SIGTERM)return -1;
+        if(input_closed||interrupted==SIGTERM)return -1;
         interrupted=0;
         std::unique_ptr<char,decltype(&free)> value(jobs.readline(tr("请选择编号：")),free);
-        if(!value)return -1;
+        if(!value){if(interrupted==SIGINT)continue;return -1;}
         char *end=nullptr;long selected=strtol(value.get(),&end,10);
         if(*value&&!*end&&selected>=0&&selected<=maximum)return static_cast<int>(selected);
         puts(tr("请输入列表中的编号。"));
@@ -275,8 +275,8 @@ static void task_menu(App *a,Tasks &jobs){
     }
 }
 static int chat_menu(App *a,Tasks &jobs){
-    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [0] 返回输入"));
-    int choice=number(jobs,7);if(choice<=0)return 0;
+    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回主菜单\n  [0] 返回输入"));
+    int choice=number(jobs,8);if(choice<=0)return 0;
     if(choice==1){reset_session(a);puts(tr("已开始新对话。"));}
     else if(choice==2){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)task_menu(a,jobs);
@@ -284,30 +284,33 @@ static int chat_menu(App *a,Tasks &jobs){
     else if(choice==5)status(a);
     else if(choice==6)reasoning_menu(a,jobs);
     else if(choice==7)approval_menu(a,jobs);
+    else if(choice==8)return 2;
     return interrupted==SIGTERM?-1:1;
 }
 static int chat(App *a,Tasks &jobs){
     status(a);
     puts(tr("任务及工具结果会发送到配置的 API。"));
-    puts(tr("输入 0 或空行返回主菜单，输入 / 打开数字操作菜单。"));
+    puts(tr("Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
     for(;;){
+        if(input_closed||interrupted==SIGTERM)return 0;
+        if(interrupted==SIGINT)interrupted=0;
         printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
         std::unique_ptr<char,decltype(&free)> line(jobs.readline(": "),free);
-        if(!line)return interrupted==SIGINT?1:0;
+        if(!line){if(interrupted==SIGINT)continue;return 0;}
         std::string task=line.get();
-        if(task.empty()||task=="0")return 1;
-        if(task=="/"){if(chat_menu(a,jobs)<0)return 0;continue;}
-        if(run_task(a,task.c_str()))fprintf(stderr,"%s\n",a->error);
+        if(task.empty())continue;
+        if(task=="/"){int selected=chat_menu(a,jobs);if(selected<0)return 0;if(selected==2)return 1;continue;}
+        if(run_task(a,task.c_str())&&!input_closed)fprintf(stderr,"%s\n",a->error);
         if(interrupted==SIGTERM)return 0;
     }
 }
 static int menu(App *a){
     Tasks jobs;
     for(;;){
-        printf(tr("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 退出\n"),VERSION,*sget(a->config,"model")?sget(a->config,"profile"):tr("未配置"),*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
+        printf(tr("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出\n"),VERSION,*sget(a->config,"model")?sget(a->config,"profile"):tr("未配置"),*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
         int choice=number(jobs,6);
-        if(choice<0){if(interrupted==SIGINT)continue;return 0;}
-        if(!choice)return 0;
+        if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
+        if(!choice){puts(tr("请按 Ctrl+D 退出。"));continue;}
         int rc=0;
         if(choice==1){if(config_valid(a,a->config))puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));else if(!chat(a,jobs))return 0;}
         else if(choice==2)rc=select_model(a);
@@ -321,7 +324,7 @@ static int menu(App *a){
 }
 static void help(void){
     puts(tr("运行 desk 后，使用数字菜单完成对话、任务管理和设置。"));
-    puts(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--version 查看版本\n--help 帮助"));
+    puts(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
 }
 static int run_cli(int argc,char **argv){
     setlocale(LC_ALL,"");
@@ -361,6 +364,7 @@ static int run_cli(int argc,char **argv){
         else if(!strcmp(arg,"--allow-shell"))a.shell=true;
         else if(!strcmp(arg,"--allow-desktop"))a.desktop=true;
         else if(!strcmp(arg,"--record"))a.record=true;
+        else if(!strcmp(arg,"--verbose"))a.verbose=true;
         else if(!strcmp(arg,"--workspace")||!strcmp(arg,"--provider")||!strcmp(arg,"--app")||!strcmp(arg,"--max-steps")){
             if(i+1>=argc){
                 rc=2;
@@ -441,7 +445,7 @@ static int run_cli(int argc,char **argv){
     }
     else {Tasks jobs;chat(&a,jobs);}
     cleanup:
-    return interrupted==SIGTERM?143:interrupted==SIGINT?130:rc;
+    return input_closed?0:interrupted==SIGTERM?143:interrupted==SIGINT?130:rc;
 }
 int desk_main(int argc,char **argv){
     platform_initialize();

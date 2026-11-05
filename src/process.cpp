@@ -68,6 +68,8 @@ J *run_command(App *a,const char *command,int timeout_ms){
     int status=0;
     bool reaped=false,timed=false,failed=false;
     while(!interrupted){
+        check_exit(*a);
+        if(interrupted)break;
         pid_t result=waitpid(child,&status,WNOHANG);
         if(result==child){
             reaped=true;

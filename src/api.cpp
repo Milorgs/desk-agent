@@ -22,8 +22,8 @@ static size_t receive(char *p,size_t size,size_t count,void *user){
     catch(...) { return 0; } // Exceptions must not cross libcurl's C callback.
     return n;
 }
-static int progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl_off_t v){
-    (void)u;
+static int transfer_progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl_off_t v){
+    if(u)check_exit(*static_cast<App *>(u));
     (void)d;
     (void)n;
     (void)t;
@@ -71,7 +71,8 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         curl_easy_setopt(h,CURLOPT_NOSIGNAL,1L);
         curl_easy_setopt(h,CURLOPT_WRITEFUNCTION,receive);
         curl_easy_setopt(h,CURLOPT_WRITEDATA,&b);
-        curl_easy_setopt(h,CURLOPT_XFERINFOFUNCTION,progress);
+        curl_easy_setopt(h,CURLOPT_XFERINFOFUNCTION,transfer_progress);
+        curl_easy_setopt(h,CURLOPT_XFERINFODATA,a);
         curl_easy_setopt(h,CURLOPT_NOPROGRESS,0L);
         if(body){
             curl_easy_setopt(h,CURLOPT_POSTFIELDS,body);
@@ -103,7 +104,7 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         if(retry&&attempt<2&&!interrupted){
             fprintf(stderr,tr("API HTTP %ld，正在重试（%d/2）…\n"),status,attempt+1);
             auto until=monotime()+(1<<attempt);
-            while(monotime()<until&&!interrupted)std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            while(monotime()<until&&!interrupted){check_exit(*a);std::this_thread::sleep_for(std::chrono::milliseconds(50));}
             if(interrupted){
                 seterr(a,tr("请求已取消。"));
                 return NULL;

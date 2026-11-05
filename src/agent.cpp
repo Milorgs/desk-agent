@@ -191,6 +191,14 @@ static void show_result(const char *name,J *r,double elapsed){
         if(strlen(output)>1600||bget(r,"truncated"))puts(tr("  …输出已截断，模型可见工具返回的输出片段。"));
     }
 }
+static const char *activity(const char *name){
+    if(!strcmp(name,"read_file"))return tr("正在读取文件…");
+    if(!strcmp(name,"list_files"))return tr("正在查看目录…");
+    if(!strcmp(name,"search_text"))return tr("正在搜索…");
+    if(!strcmp(name,"write_file")||!strcmp(name,"edit_file"))return tr("正在编辑文件…");
+    if(!strcmp(name,"run_shell"))return tr("正在执行命令…");
+    return tr("正在操作桌面…");
+}
 int run_task(App *a,const char *task){
     std::unique_ptr<ResourceLock> desktop_lock;
     if(a->desktop){
@@ -217,7 +225,8 @@ int run_task(App *a,const char *task){
             puts(tr("较早的任务未发送给模型，当前任务及其工具结果完整保留。"));
             trimmed=true;
         }
-        printf(tr("[%d/%d] 正在请求模型…\n"),step,a->max_steps);
+        if(a->verbose)printf(tr("[%d/%d] 正在请求模型…\n"),step,a->max_steps);
+        else progress(a,tr("正在思考…"));
         fflush(stdout);
         J *reply=api_complete(a,a->config,history,tools);
         json_object_put(history);
@@ -238,6 +247,7 @@ int run_task(App *a,const char *task){
                 json_object_put(reply);
                 break;
             }
+            progress_clear(a);
             puts(sget(reply,"content"));
             add(a->messages,reply);
             a->state="本轮结束";
@@ -245,7 +255,7 @@ int run_task(App *a,const char *task){
             break;
         }
         add(a->messages,reply);
-        if(*sget(reply,"content"))puts(sget(reply,"content"));
+        if(a->verbose&&*sget(reply,"content"))puts(sget(reply,"content"));
         for(size_t i=0;i<alen(calls);i++){
             J *call=at(calls,i),*fn=get(call,"function");
             if(interrupted){
@@ -254,7 +264,8 @@ int run_task(App *a,const char *task){
             }
             const char *name=sget(fn,"name");
             J *args=arguments(sget(fn,"arguments"));
-            show_call(name,args);
+            if(a->verbose)show_call(name,args);
+            else progress(a,activity(name));
             double tool_started=monotime();
             J *result=tool_call(a,name,args);
             bool denied=bget(result,"denied");
@@ -267,7 +278,12 @@ int run_task(App *a,const char *task){
                 if(mutation(name))desktop_unverified=true;
                 else if(*sget(args,"app"))desktop_unverified=false;
             }
-            show_result(name,result,monotime()-tool_started);
+            if(a->verbose)show_result(name,result,monotime()-tool_started);
+            else if(failed){
+                progress_clear(a);
+                if(*sget(result,"error"))fprintf(stderr,"%s\n",sget(result,"error"));
+                else fprintf(stderr,tr("操作失败（退出码 %d）。\n"),iget(result,"exit_code",-1));
+            }
             tool_result(a,sget(call,"id"),result);
             json_object_put(args);
             json_object_put(result);
@@ -280,6 +296,7 @@ int run_task(App *a,const char *task){
         }
     }
     done:
+    progress_clear(a);
     if(!a->error[0]&&rc)seterr(a,interrupted?tr("任务已停止。"):tr("达到步骤上限，任务未确认完成。"));
     if(interrupted)a->state="已取消";
     else if(rc&&strcmp(a->state,"已取消"))a->state="失败";

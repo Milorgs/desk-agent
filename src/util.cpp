@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <poll.h>
+#include <sys/ioctl.h>
 #include <time.h>
 char *read_bytes(const char *path,size_t limit,size_t *length){
     int fd=open(path,O_RDONLY|O_NOFOLLOW);
@@ -89,6 +91,7 @@ int atomic_file(const char *path,const void *data,size_t len,unsigned int mode){
     return rc;
 }
 char *input(const char *prompt,const char *fallback,bool secret){
+    if(input_closed)return nullptr;
     printf("%s",prompt);
     fflush(stdout);
     struct termios old;
@@ -106,6 +109,7 @@ char *input(const char *prompt,const char *fallback,bool secret){
         putchar('\n');
     }
     if(n<0){
+        if(feof(stdin)&&!interrupted)input_closed=true;
         free(line);
         clearerr(stdin);
         return NULL;
@@ -120,4 +124,12 @@ char *input(const char *prompt,const char *fallback,bool secret){
         return strdup(fallback);
     }
     return line;
+}
+
+// Detect a canonical terminal EOF without consuming queued request text.
+void check_exit(const App &app){
+    if(app.task_events>=0||input_closed||!isatty(STDIN_FILENO))return;
+    struct termios mode{};if(tcgetattr(STDIN_FILENO,&mode)||!(mode.c_lflag&ICANON))return;
+    struct pollfd ready{STDIN_FILENO,POLLIN,0};int bytes=0;
+    if(poll(&ready,1,0)>0&&(ready.revents&(POLLIN|POLLHUP))&&!ioctl(STDIN_FILENO,FIONREAD,&bytes)&&bytes==0){input_closed=true;interrupted=SIGINT;}
 }

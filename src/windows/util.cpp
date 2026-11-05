@@ -58,6 +58,7 @@ int atomic_file(const char *path,const void *data,size_t length,unsigned int mod
     if(!ok){file_errno();DeleteFileW(temporary.c_str());return -1;}return 0;
 }
 char *input(const char *prompt,const char *fallback,bool secret){
+    if(input_closed)return nullptr;
     fputs(prompt,stdout);fflush(stdout);HANDLE handle=GetStdHandle(STD_INPUT_HANDLE);DWORD mode=0;
     std::string line;bool console=GetConsoleMode(handle,&mode)!=FALSE,ok=true;
     if(console){
@@ -68,7 +69,7 @@ char *input(const char *prompt,const char *fallback,bool secret){
             text.append(buffer,count);if(text.size()>65536){ok=false;break;}if(text.find(L'\n')!=std::wstring::npos)break;
         }
         if(secret){SetConsoleMode(handle,mode);putchar('\n');}
-        if(!text.empty()&&text.front()==26)ok=false;
+        if(!text.empty()&&(text.front()==4||text.front()==26))ok=false;
         if(ok&&!interrupted)line=utf8(text);
     }else{
         bool pipe=GetFileType(handle)==FILE_TYPE_PIPE;
@@ -77,7 +78,10 @@ char *input(const char *prompt,const char *fallback,bool secret){
             char byte;DWORD count=0;if(!ReadFile(handle,&byte,1,&count,nullptr)||!count){ok=false;break;}if(byte=='\n')break;line+=byte;if(line.size()>65536){ok=false;break;}
         }
     }
+    if(!ok&&!interrupted)input_closed=true;
     if(!ok||interrupted||line.size()>65536)return nullptr;
     while(!line.empty()&&(line.back()=='\r'||line.back()=='\n'))line.pop_back();
     return _strdup(line.empty()&&fallback?fallback:line.c_str());
 }
+
+void check_exit(const App &app){(void)app;}

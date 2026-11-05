@@ -9,6 +9,16 @@
 #include <cstdio>
 #include <stdexcept>
 std::atomic<int> interrupted{0};
+std::atomic<bool> input_closed{false};
+void progress_clear(App *app){
+    if(app->progress_visible){fputs("\r                              \r",stdout);fflush(stdout);app->progress_visible=false;}
+}
+void progress(App *app,const char *text){
+    progress_clear(app);
+    if(app->task_events<0&&isatty(1)){fputs(text,stdout);app->progress_visible=true;}
+    else puts(text);
+    fflush(stdout);
+}
 J *obj(void){
     return json_object_new_object();
 }
@@ -113,13 +123,24 @@ bool approval_required(const App &app,Operation operation){
 }
 int approve(App *a,const char *description,Operation operation){
     if(interrupted)return 0;
-    printf("\n%s\n",description);
-    if(!approval_required(*a,operation))return 1;
+    if(!approval_required(*a,operation)){if(a->verbose)printf("\n%s\n",description);return 1;}
+    progress_clear(a);
+    bool compact=!a->verbose&&a->task_events<0;
+    if(compact){
+        size_t count=strcspn(description,"\n");if(count>300)count=300;
+        while(count&&(static_cast<unsigned char>(description[count])&0xc0)==0x80)count--;
+        printf("\n%.*s%s\n",static_cast<int>(count),description,description[count]?"…":"");
+    }else printf("\n%s\n",description);
     if(a->task_events<0&&!isatty(STDIN_FILENO))return 0;
     task_event(*a,'a');
-    char *v=input(a->task_events>=0?tr("等待你在任务菜单中确认此次操作。"):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消："),NULL,false);
+    bool yes=false;
+    for(;;){
+        const char *prompt=a->task_events>=0?tr("等待你在任务菜单中确认此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
+        char *value=input(prompt,nullptr,false);
+        if(value&&compact&&!strcmp(value,"3")){free(value);printf("\n%s\n",description);continue;}
+        yes=value&&!strcmp(value,"1");free(value);break;
+    }
     task_event(*a,'r');
-    int yes=v&&!strcmp(v,"1");
-    free(v);
+    if(yes&&!a->verbose)progress(a,tr("正在执行操作…"));
     return yes;
 }
