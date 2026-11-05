@@ -1025,7 +1025,7 @@ static void test_chat_exit_paths(void){
         int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
         if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
         std::string output;
-        if(route==4){CHECK(write(master,"0\n",2)==2);CHECK(terminal_until(master,output,"Press Ctrl+D to exit."));}
+        if(route==4){CHECK(terminal_until(master,output,"[0] Exit"));}
         else{
             CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));output.clear();
             if(route==1){CHECK(write(master,"\n",1)==1);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));}
@@ -1033,7 +1033,7 @@ static void test_chat_exit_paths(void){
             else if(route==3){CHECK(write(master,"/\n6\n",4)==4);CHECK(terminal_until(master,output,"[7] Restore provider default"));}
         }
         CHECK(kill(child,0)==0);
-        if(route==4){output.erase(0,output.find("Press Ctrl+D to exit."));CHECK(terminal_until(master,output,"Select a number:"));CHECK(write(master,"\x04",1)==1);}
+        if(route==4){CHECK(terminal_until(master,output,"Select a number:"));CHECK(write(master,"0\n",2)==2);}
         else{if(route==3){output.erase(0,output.find("[7] Restore provider default"));CHECK(terminal_until(master,output,"Select a number:"));}leave_chat_and_exit(master);}
         int status=0;pid_t ended=0;double until=monotime()+5;
         while(monotime()<until&&(ended=waitpid(child,&status,WNOHANG))==0)usleep(10000);

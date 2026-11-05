@@ -413,10 +413,10 @@ static int menu(App *a){
         if(*sget(a->config,"model"))printf(tr("  当前模型：%s / %s\n"),sget(a->config,"profile"),sget(a->config,"model"));
         else puts(tr("  当前模型：未配置"));
         if(*sget(a->config,"model")||!usage)show_token_usage(usage.get(),a->config);
-        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出"));
+        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 退出"));
         int choice=number(jobs,6);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
-        if(!choice){puts(tr("请按 Ctrl+D 退出。"));continue;}
+        if(!choice)return 0;
         int rc=0;
         if(choice==1)conversation_menu(a,jobs,conversations);
         else if(choice==2)rc=select_model(a,jobs);
