@@ -13,6 +13,8 @@
 #include <locale.h>
 #include <algorithm>
 #include <cstdarg>
+#include <cerrno>
+#include <cctype>
 
 #ifndef _WIN32
 static void on_signal(int number){
@@ -22,6 +24,14 @@ static void on_signal(int number){
 // One alternate screen owns every interactive page, including the main menu.
 static bool interface_active=false;
 static int content_top=1;
+static std::string page_notice;
+static void set_notice(const std::string &text){
+    if(interface_active){page_notice=text;while(!page_notice.empty()&&page_notice.back()=='\n')page_notice.pop_back();}
+    else puts(text.c_str());
+}
+static void show_notice(){
+    if(!page_notice.empty()){printf("%s\n\n",page_notice.c_str());page_notice.clear();}
+}
 static bool roomy_interface(){
     return interface_active&&terminal_columns()>=70&&terminal_rows()-content_top+1>=30;
 }
@@ -173,7 +183,7 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
         break;
     }
     int rc=save_config(a,candidate);
-    if(!rc)menu_text(tr("已保存并选用该模型。"));
+    if(!rc)set_notice(tr("已保存并选用该模型。"));
     return rc;
 }
 static int add_model(App *a,const char *preset){
@@ -196,7 +206,7 @@ static int select_model(App *a,Tasks &jobs){
     clear_page();
     J *profiles=get(a->store,"profiles");
     if(!json_object_object_length(profiles)){
-        menu_text(tr("尚未保存模型，请选择 [3] 添加模型。"));
+        set_notice(tr("尚未保存模型，请选择 [3] 添加模型。"));
         return 0;
     }
     std::vector<std::string> order;
@@ -230,8 +240,10 @@ static int number(Tasks &jobs,int maximum){
         std::string prompt=std::string(roomy_interface()?"    ":"")+tr("请选择编号：");
         std::unique_ptr<char,decltype(&free)> value(jobs.readline(prompt.c_str()),free);
         if(!value){if(interrupted==SIGINT)continue;return -1;}
-        char *end=nullptr;long selected=strtol(value.get(),&end,10);
-        if(*value&&!*end&&selected>=0&&selected<=maximum)return static_cast<int>(selected);
+        char *start=value.get();while(isspace(static_cast<unsigned char>(*start)))start++;
+        char *end=nullptr;errno=0;long selected=strtol(start,&end,10);
+        bool digits=end!=start;while(isspace(static_cast<unsigned char>(*end)))end++;
+        if(digits&&errno!=ERANGE&&!*end&&selected>=0&&selected<=maximum)return static_cast<int>(selected);
         menu_text(tr("请输入列表中的编号。"));
     }
 }
@@ -243,8 +255,8 @@ static void language_menu(App *a,Tasks &jobs){
     clear_page();
     menu_text(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
     int choice=number(jobs,2);
-    if(choice==1)save_language(*a,"zh");
-    else if(choice==2)save_language(*a,"en");
+    if(choice==1&&save_language(*a,"zh")&&interface_active)set_notice(tr("语言已切换为简体中文。"));
+    else if(choice==2&&save_language(*a,"en")&&interface_active)set_notice(tr("语言已切换为 English。"));
 }
 static void model_id_menu(App *a,Tasks &jobs){
     clear_page();
@@ -261,7 +273,7 @@ static void model_id_menu(App *a,Tasks &jobs){
     if(model.empty())return;
     JsonPtr candidate(copy(a->config));put(candidate.get(),"model",str(model.c_str()));
     if(save_config(a,candidate.get()))fprintf(stderr,"%s\n",a->error);
-    else menu_text(tr("已保存新模型并清空对话。"));
+    else set_notice(tr("已保存新模型并清空对话。"));
 }
 static void approval_menu(App *a,Tasks &jobs){
     clear_page();
@@ -269,7 +281,7 @@ static void approval_menu(App *a,Tasks &jobs){
     menu_text(tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。"));
     int selected=number(jobs,3);if(selected<=0)return;
     a->yes=selected==3;a->auto_edit=selected==2;
-    printf(tr("批准模式：%s（本次运行）\n"),permission_name(*a));
+    char message[256];snprintf(message,sizeof message,tr("批准模式：%s（本次运行）\n"),permission_name(*a));set_notice(message);
 }
 static void reasoning_menu(App *a,Tasks &jobs){
     clear_page();
@@ -286,19 +298,20 @@ static void reasoning_menu(App *a,Tasks &jobs){
     if(choice==7)json_object_object_del(candidate.get(),"reasoning_effort");
     else put(candidate.get(),"reasoning_effort",str(levels[choice-1]));
     if(save_config(a,candidate.get(),false))fprintf(stderr,"%s\n",a->error);
-    else printf(tr("已保存推理模式：%s；保留当前对话。\n"),reasoning_name(sget(a->config,"reasoning_effort")));
+    else {char message[256];snprintf(message,sizeof message,tr("已保存推理模式：%s；保留当前对话。\n"),reasoning_name(sget(a->config,"reasoning_effort")));set_notice(message);}
 }
 static void settings_menu(App *a,Tasks &jobs){
-    clear_page();
     for(;;){
+        clear_page();show_notice();
         menu_text(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));
         int choice=number(jobs,7);if(choice<=0)return;
+        a->error[0]=0;
         if(choice==1)language_menu(a,jobs);
         else if(choice==2){
             clear_page();
             menu_text(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
-            if(selected==1){a->desktop=true;menu_text(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
-            else if(selected==2){a->desktop=false;desktop_clear(a);menu_text(tr("桌面工具已关闭。"));}
+            if(selected==1){a->desktop=true;set_notice(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
+            else if(selected==2){a->desktop=false;desktop_clear(a);set_notice(tr("桌面工具已关闭。"));}
         }else if(choice==3){
             approval_menu(a,jobs);
         }else if(choice==4){
@@ -308,10 +321,11 @@ static void settings_menu(App *a,Tasks &jobs){
         else if(choice==6){
             menu_text(tr("发送最小工具调用测试（少量 API 用量），不发送当前会话。"));
             if(api_check(a,a->config))fprintf(stderr,"%s\n",a->error);
-            else menu_text(tr("连接成功，工具调用已验证。测试未操作电脑。"));
+            else set_notice(tr("连接成功，工具调用已验证。测试未操作电脑。"));
         }
         else if(choice==7)reasoning_menu(a,jobs);
-        if(interrupted==SIGTERM)return;
+        if(a->error[0]){set_notice(a->error);a->error[0]=0;}
+        if(interrupted==SIGTERM||input_closed)return;
     }
 }
 struct Conversation {
@@ -349,6 +363,7 @@ static const char *title_of(const Conversation &item){return item.title.empty()?
 
 #ifndef _WIN32
 static void advance_conversations(Tasks &jobs,std::vector<Conversation> &items){
+    if(std::none_of(items.begin(),items.end(),[](const auto &item){return !item.queue.empty();}))return;
     JsonPtr states(jobs.snapshot());
     size_t active=0;
     for(size_t i=0;i<alen(states.get());i++)if(bget(at(states.get(),i),"active"))active++;
@@ -421,6 +436,8 @@ public:
         const bool live_header=pinned&&rows>=10&&columns>=40;
         JsonPtr states(jobs.snapshot());
         std::string header=tr("对话运行状态");
+        size_t queued=0;for(const auto &item:items)queued+=item.queue.size();
+        if(queued){char label[80];snprintf(label,sizeof label,tr(" · 排队：%zu"),queued);header+=label;}
         int line=2;
         for(auto &item:items){
             J *state=nullptr;
@@ -565,6 +582,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
 ){
     clear_page();
     if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
+    show_notice();
     printf(tr("  工作目录：%s\n"),a->root);
     menu_text(tr("任务及工具结果会发送到配置的 API。"));
 #ifndef _WIN32
@@ -615,6 +633,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
             clear_page();
             if(a->error[0])fprintf(stderr,"%s\n",a->error);
             if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
+            show_notice();
             last_modes.clear();
             continue;
         }
@@ -669,7 +688,11 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             clear_page();
             menu_text(tr("\n选择对话（仅本次运行保留）"));
             if(items.empty())menu_text(tr("还没有对话。"));
-            for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+1,title_of(items[i]));
+            for(size_t i=0;i<items.size();i++){
+                printf("  %zu. %s",i+1,title_of(items[i]));
+                if(!items[i].queue.empty())printf(tr(" · 排队：%zu"),items[i].queue.size());
+                putchar('\n');
+            }
             menu_printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [0] 返回主菜单\n"),create,rename,remove);
             choice=number(jobs,remove);
             if(choice<=0)return;
@@ -688,7 +711,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             if(deleting){
                 menu_printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
                 if(number(jobs,1)==1){
-                    if(item->job)jobs.cancel(item->job);
+                    if(item->job)jobs.remove(item->job);
                     items.erase(item);
                 }
             }else{
@@ -698,7 +721,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             continue;
         }
         if(choice==create){
-            if(config_valid(a,a->config)){menu_text(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
+            if(config_valid(a,a->config)){set_notice(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
             items.push_back({{},JsonPtr(arr()),JsonPtr(copy(a->config))});
         }
         auto selected=items.begin()+(choice-1);
@@ -735,6 +758,7 @@ static int menu(App *a){
         if(input_closed)return 0;
         clear_page();
         show_banner();
+        show_notice();
         if(!notice.empty()){puts(notice.c_str());notice.clear();}
         menu_text(tr("  已导入的模型"));
         JsonPtr usage(load_tokens(*a));

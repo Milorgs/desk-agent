@@ -831,6 +831,34 @@ static void test_parallel_tasks(void){
     }
     server_done(server);app_cleanup(&a);
 }
+static void test_removed_tasks(){
+    App a=fresh();json_object_put(a.config);a.config=config("removed-tasks","openai");
+    const auto done=model_reply(nullptr,"done");
+    const auto running=model_tool("run","run_shell",command("echo $$ > removed.pid; sleep 30"));
+    std::vector<const char *> responses(34,done.c_str());responses.push_back(running.c_str());
+    pid_t server=fake_server(&a,responses.data(),static_cast<int>(responses.size()));
+    auto descriptors=[](){return static_cast<size_t>(std::distance(fs::directory_iterator("/proc/self/fd"),fs::directory_iterator{}));};
+    {
+        Tasks jobs("./build/desk");const auto before=descriptors();
+        for(int i=0;i<34;i++){
+            int id=jobs.start(a,"temporary conversation");CHECK(id>0);CHECK(await_state(jobs,id,"已完成"));
+            CHECK(jobs.remove(id));CHECK(!jobs.remove(id));CHECK(!jobs.resume(id,"deleted context"));
+            JsonPtr state(jobs.snapshot());CHECK(alen(state.get())==0);
+            double until=monotime()+2;while(descriptors()>before&&monotime()<until){jobs.refresh();usleep(10000);}
+            CHECK(descriptors()==before);
+        }
+        int id=jobs.start(a,"remove a running conversation");CHECK(id>0);
+        auto path=std::string(a.root)+"/removed.pid";double until=monotime()+5;
+        while(access(path.c_str(),F_OK)&&monotime()<until){jobs.refresh();usleep(10000);}
+        char *pid_text=read_bytes(path.c_str(),100,nullptr);CHECK(pid_text);
+        pid_t child=static_cast<pid_t>(strtol(pid_text,nullptr,10));free(pid_text);
+        CHECK(child>0);CHECK(jobs.remove(id));
+        JsonPtr state(jobs.snapshot());CHECK(alen(state.get())==0);
+        until=monotime()+3;while((alive(child)||descriptors()>before)&&monotime()<until){jobs.refresh();usleep(10000);}
+        CHECK(!alive(child));CHECK(descriptors()==before);
+    }
+    server_done(server);app_cleanup(&a);
+}
 static void test_parallel_resources(void){
     App a=fresh();json_object_put(a.config);a.config=config("locks","openai");
     char other[PATH_MAX];CHECK(!path_suffix(other,a.root,"/other"));CHECK(!mkdirs(other,0700));
@@ -995,6 +1023,30 @@ static void test_numeric_settings(void){
     CHECK(output.find("\n  Task:")==std::string::npos&&output.find("\n  Desktop:")==std::string::npos);
     char path[PATH_MAX];CHECK(!path_suffix(path,a.config_dir,"/settings.json"));CHECK(access(path,F_OK)!=0);
     app_cleanup(&a);
+}
+static void test_settings_redraw(){
+    App a=fresh();int master=-1;struct winsize window{40,110,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    std::string output;CHECK(terminal_until(master,output,"Select a number:"));
+    const char *keys=" 4 \n2\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    output.clear();CHECK(terminal_until(master,output,"Desktop tools enabled"));
+    CHECK(output.rfind("\033[1;1H\033[J")!=std::string::npos);output.erase(0,output.rfind("\033[1;1H\033[J"));
+    CHECK(terminal_until(master,output,"Select a number:"));auto screen=output;
+    CHECK(screen.find("[1] Interface language")!=std::string::npos);
+    CHECK(screen.find("Desktop tools enabled")!=std::string::npos);
+    CHECK(screen.find("[1] Enable")==std::string::npos);
+    // A failed connection test remains visible on the settings page.
+    output.clear();CHECK(write(master,"6\n",2)==2);
+    CHECK(terminal_until(master,output,"Add a model and enter an API key first."));CHECK(terminal_until(master,output,"Select a number:"));
+    CHECK(output.rfind("\033[1;1H\033[J")!=std::string::npos);
+    screen=output.substr(output.rfind("\033[1;1H\033[J"));
+    CHECK(screen.find("Add a model and enter an API key first.")!=std::string::npos);CHECK(screen.find("[1] Interface language")!=std::string::npos);
+    // EOF from a settings submenu must terminate without redrawing forever.
+    output.clear();CHECK(write(master,"2\n",2)==2);CHECK(terminal_until(master,output,"[1] Enable"));
+    CHECK(write(master,"\x04",1)==1);
+    int status=0;double until=monotime()+3;pid_t ended=0;
+    while(monotime()<until&&(ended=waitpid(child,&status,WNOHANG))==0)usleep(10000);
+    CHECK(ended==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);app_cleanup(&a);
 }
 static void test_approval_modes(void){
     App a=fresh();a.yes=false;
@@ -1187,7 +1239,7 @@ static void test_queued_editing(void){
     int master=-1;struct winsize window{24,80,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
     if(!child){setenv("TERM","xterm-256color",1);setenv("INPUTRC","/dev/null",1);execl("./build/desk","desk","--lang","en","--yes","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     CHECK(write(master,"1\n1\nfirst\n",10)==10);std::string output;CHECK(terminal_until(master,output,"Running a command..."));
-    std::string queued="排队😀\x7f下一句\n";type_terminal(master,output,queued);CHECK(terminal_until(master,output,"QUEUED_DONE"));wait_for_chat_prompt(master,output,"QUEUED_DONE");
+    std::string queued="排队😀\x7f下一句\n";type_terminal(master,output,queued);CHECK(terminal_until(master,output,"Queued: 1"));CHECK(terminal_until(master,output,"QUEUED_DONE"));wait_for_chat_prompt(master,output,"QUEUED_DONE");
     JsonPtr request(capture(&a,2));J *messages=get(get(request.get(),"body"),"messages");CHECK(!strcmp(sget(at(messages,alen(messages)-1),"content"),"排队下一句"));
     leave_chat_and_exit(master);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);app_cleanup(&a);
 }
@@ -1459,6 +1511,7 @@ int main(int argc,char **argv){
     test_native_error_flags();
     test_menu();
     test_parallel_tasks();
+    test_removed_tasks();
     test_parallel_resources();
     test_task_switch_approval();
     test_task_switch_approval(false);
@@ -1467,6 +1520,7 @@ int main(int argc,char **argv){
     test_no_extra_model_prompts();
     test_numeric_request();
     test_numeric_settings();
+    test_settings_redraw();
     curl_global_cleanup();
     printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu/parallel/resume/approval/locks integration.\n",checks);
     return 0;

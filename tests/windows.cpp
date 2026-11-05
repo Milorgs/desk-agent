@@ -120,11 +120,35 @@ static void test_parallel(){
     put(app.config,"model",str("model-test"));app.yes=true;Server cancel({response("run_shell",command_args("Start-Sleep -Seconds 30")),response()});cancel.use(app);
     {Tasks tasks(executable);int a=tasks.start(app,"long task");CHECK(a==1);double until=monotime()+8;while(tasks.output(a).find("正在执行命令…")==std::string::npos&&monotime()<until)Sleep(10);CHECK(tasks.output(a).find("正在执行命令…")!=std::string::npos);int b=tasks.start(app,"independent task");CHECK(b==2);CHECK(tasks.cancel(a));CHECK(await(tasks,a,"已取消"));CHECK(await(tasks,b,"已完成"));}cancel.done();
 }
+static void test_removed_tasks(){
+    Fixture fixture;App &app=fixture.app;
+    Server server(std::vector<std::string>(34,response()));server.use(app);
+    {Tasks tasks(executable);
+        for(int i=0;i<34;i++){
+            int id=tasks.start(app,"temporary conversation");CHECK(id>0);CHECK(await(tasks,id,"已完成"));
+            CHECK(tasks.remove(id));CHECK(!tasks.remove(id));CHECK(!tasks.resume(id,"deleted context"));
+            JsonPtr list(tasks.snapshot());CHECK(alen(list.get())==0);
+        }
+    }server.done();
+    Server active({response("run_shell",command_args("Set-Content -Path removed.pid -Value $PID; Start-Sleep -Seconds 30"))});active.use(app);
+    {Tasks tasks(executable);int id=tasks.start(app,"remove active conversation");CHECK(id>0);
+        auto path=fs_path(app.root)/"removed.pid";double until=monotime()+8;DWORD number=0;
+        while(!number&&monotime()<until){
+            tasks.refresh();char *pid=read_bytes(path_text(path).c_str(),100,nullptr);
+            if(pid){number=static_cast<DWORD>(strtoul(pid,nullptr,10));free(pid);}if(!number)Sleep(10);
+        }
+        CHECK(number>0);
+        WinHandle child(OpenProcess(SYNCHRONIZE,FALSE,number));CHECK(child);
+        CHECK(tasks.remove(id));JsonPtr list(tasks.snapshot());CHECK(alen(list.get())==0);
+        until=monotime()+5;while(WaitForSingleObject(child.get(),0)!=WAIT_OBJECT_0&&monotime()<until){tasks.refresh();Sleep(10);}
+        CHECK(WaitForSingleObject(child.get(),0)==WAIT_OBJECT_0);
+    }active.done();
+}
 int main(int argc,char **argv){
     platform_initialize();WSADATA sockets{};if(WSAStartup(MAKEWORD(2,2),&sockets))return 1;curl_global_init(CURL_GLOBAL_DEFAULT);
     try{
         CHECK(argc==2);executable=argv[1];wchar_t temporary[32768];CHECK(GetTempPathW(32768,temporary)>0);char id[33];id_string(id);sandbox=fs::path(temporary)/(L"desk-test-你好-"+wide(id));CHECK(!mkdirs(path_text(sandbox).c_str(),0700));
-        test_files_config();test_commands();test_api_loops();test_parallel();
+        test_files_config();test_commands();test_api_loops();test_parallel();test_removed_tasks();
         std::cout<<"PASS: "<<checks<<" Windows checks (UTF-8 files, ACL, PowerShell, cancellation, APIs, parallel tasks, approval, resume).\n";
         fs::remove_all(sandbox);curl_global_cleanup();WSACleanup();return 0;
     }catch(const std::exception &error){std::cerr<<"FAIL: "<<error.what()<<"\n";curl_global_cleanup();WSACleanup();return 1;}

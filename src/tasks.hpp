@@ -12,6 +12,7 @@ public:
     void refresh();
     J *snapshot();
     bool cancel(int id);
+    bool remove(int id);
     bool resume(int id,const std::string &task,J *settings=nullptr);
     bool respond(int id,int answer);
     std::string output(int id,bool *truncated=nullptr);

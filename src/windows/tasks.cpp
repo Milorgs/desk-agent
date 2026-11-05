@@ -5,6 +5,7 @@
 namespace {
 struct Job {
     int id=0;bool active=true,alive=true,cancelled=false,truncated=false;
+    bool retired=false;double retired_at=0;
     std::string title,workspace,state="执行中",text;
     WinHandle process,group,feed,approval,logs,events,cancellation;
     std::mutex mutex;std::jthread reader;
@@ -69,7 +70,7 @@ ResourceLock::ResourceLock(const char *config_dir){
 ResourceLock::~ResourceLock(){if(fd>=0){HANDLE handle=reinterpret_cast<HANDLE>(fd);OVERLAPPED offset{};UnlockFileEx(handle,0,1,0,&offset);CloseHandle(handle);}}
 struct Tasks::Impl {
     std::vector<std::unique_ptr<Job>> jobs;int next=1;std::wstring executable;
-    Job *find(int id){for(auto &job:jobs)if(job->id==id)return job.get();return nullptr;}
+    Job *find(int id){for(auto &job:jobs)if(job->id==id&&!job->retired)return job.get();return nullptr;}
 };
 Tasks::Tasks(std::string executable):impl(std::make_unique<Impl>()){
     if(executable=="/proc/self/exe"){
@@ -86,16 +87,21 @@ Tasks::~Tasks(){
 }
 void Tasks::refresh(){
     for(auto &job:impl->jobs){
+        if(job->retired&&monotime()-job->retired_at>10&&WaitForSingleObject(job->process.get(),0)!=WAIT_OBJECT_0)TerminateJobObject(job->group.get(),1);
         if(WaitForSingleObject(job->process.get(),0)==WAIT_OBJECT_0){
             std::lock_guard lock(job->mutex);if(!job->alive)continue;job->alive=false;
             DWORD code=1;GetExitCodeProcess(job->process.get(),&code);
             if(job->active)job->state=job->cancelled?"已取消":code==0?"已完成":"失败";job->active=false;
         }
     }
+    std::erase_if(impl->jobs,[](auto &job){
+        if(!job->retired||WaitForSingleObject(job->process.get(),0)!=WAIT_OBJECT_0)return false;
+        job->reader.request_stop();if(job->reader.joinable())job->reader.join();return true;
+    });
 }
 int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     refresh();size_t active=0;for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);if(job->active)active++;}
-    if(task.empty()||task.size()>65536||active>=4||impl->jobs.size()>=32){seterr(&app,tr("任务为空、过长或达到上限（同时 4 个，本次会话共 32 个）。"));return -1;}
+    if(task.empty()||task.size()>65536||active>=4||std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const auto &job){return !job->retired;})>=32){seterr(&app,tr("任务为空、过长或达到上限（同时 4 个，最多保留 32 个）。"));return -1;}
     if(config_valid(&app,app.config))return -1;
     char root[PATH_MAX];if(!canonical_directory(workspace.empty()?app.root:workspace.c_str(),root)){seterr(&app,tr("工作目录不存在。"));return -1;}
     auto job=std::make_unique<Job>();job->id=impl->next;job->title=task;job->workspace=root;job->group=kill_job();
@@ -114,8 +120,13 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     if(!win_write(job->feed.get(),body)){TerminateJobObject(job->group.get(),1);job->reader.request_stop();job->reader.join();seterr(&app,tr("无法传递任务配置。"));return -1;}
     int id=impl->next++;impl->jobs.push_back(std::move(job));return id;
 }
-J *Tasks::snapshot(){refresh();J *items=arr();for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);J *entry=obj();put(entry,"id",json_object_new_int(job->id));put(entry,"active",json_object_new_boolean(job->active));put(entry,"task",str(job->title.c_str()));put(entry,"state",str(tr(job->state.c_str())));put(entry,"workspace",str(job->workspace.c_str()));add(items,entry);}return items;}
+J *Tasks::snapshot(){refresh();J *items=arr();for(auto &job:impl->jobs){if(job->retired)continue;std::lock_guard lock(job->mutex);J *entry=obj();put(entry,"id",json_object_new_int(job->id));put(entry,"active",json_object_new_boolean(job->active));put(entry,"task",str(job->title.c_str()));put(entry,"state",str(tr(job->state.c_str())));put(entry,"workspace",str(job->workspace.c_str()));add(items,entry);}return items;}
 bool Tasks::cancel(int id){refresh();Job *job=impl->find(id);if(!job)return false;std::lock_guard lock(job->mutex);if(!job->active)return false;job->cancelled=true;job->state="正在停止";return SetEvent(job->cancellation.get())!=FALSE;}
+bool Tasks::remove(int id){
+    refresh();Job *job=impl->find(id);if(!job)return false;
+    {std::lock_guard lock(job->mutex);job->retired=true;job->retired_at=monotime();job->cancelled=true;}
+    SetEvent(job->cancellation.get());job->feed.reset();refresh();return true;
+}
 bool Tasks::resume(int id,const std::string &task,J *settings){
     refresh();if(task.empty()||task.size()>65536)return false;size_t active=0;for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);if(job->active)active++;}if(active>=4)return false;
     Job *job=impl->find(id);if(!job)return false;std::lock_guard lock(job->mutex);if(job->active||!job->alive)return false;

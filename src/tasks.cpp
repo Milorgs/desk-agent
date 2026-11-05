@@ -29,6 +29,8 @@ struct Job {
     int id=0,master=-1,events=-1,feed=-1;
     pid_t pid=-1;
     bool active=true,alive=true,cancelled=false,truncated=false;
+    bool retired=false;
+    double retired_at=0;
     bool thinking=false;
     double thinking_started=0;
     std::string title,workspace,state="执行中",output;
@@ -86,7 +88,7 @@ struct Tasks::Impl {
     Impl(){jobs.reserve(32);}
     int next=1;
     std::string executable;
-    Job *find(int id){for(auto &j:jobs)if(j.id==id)return &j;return nullptr;}
+    Job *find(int id){for(auto &j:jobs)if(j.id==id&&!j.retired)return &j;return nullptr;}
 };
 Tasks::Tasks(std::string executable):impl(std::make_unique<Impl>()){impl->executable=std::move(executable);}
 Tasks::~Tasks(){
@@ -114,6 +116,7 @@ void Tasks::refresh(){
         }
         drain(j);
         if(!j.alive)continue;
+        if(j.retired&&monotime()-j.retired_at>10)kill(j.pid,SIGKILL);
         int status=0;
         pid_t ended=waitpid(j.pid,&status,WNOHANG);
         if(ended==j.pid){
@@ -123,11 +126,16 @@ void Tasks::refresh(){
             drain(j);
         }
     }
+    std::erase_if(impl->jobs,[](Job &j){
+        if(!j.retired||j.alive)return false;
+        close(j.master);close(j.events);if(j.feed>=0)close(j.feed);
+        return true;
+    });
 }
 int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     refresh();
-    if(task.empty()||task.size()>65536||impl->jobs.size()>=32||std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const Job &j){return j.active;})>=4){
-        seterr(&app,tr("任务为空、过长或达到上限（同时 4 个，本次会话共 32 个）。"));return -1;
+    if(task.empty()||task.size()>65536||std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const Job &j){return !j.retired;})>=32||std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const Job &j){return j.active;})>=4){
+        seterr(&app,tr("任务为空、过长或达到上限（同时 4 个，最多保留 32 个）。"));return -1;
     }
     if(config_valid(&app,app.config))return -1;
     char root[PATH_MAX];
@@ -168,6 +176,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
 J *Tasks::snapshot(){
     refresh();J *items=arr();
     for(const auto &j:impl->jobs){
+        if(j.retired)continue;
         J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));
         bool thinking=j.thinking&&j.active&&!j.cancelled;
         put(v,"thinking",json_object_new_boolean(thinking));
@@ -176,6 +185,14 @@ J *Tasks::snapshot(){
     }return items;
 }
 bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
+bool Tasks::remove(int id){
+    refresh();auto *j=impl->find(id);if(!j)return false;
+    j->retired=true;j->retired_at=monotime();j->cancelled=true;
+    // Close an idle worker's control pipe and interrupt active operations.
+    close(j->feed);j->feed=-1;
+    if(j->alive)kill(j->pid,SIGTERM);
+    refresh();return true;
+}
 bool Tasks::resume(int id,const std::string &task,J *settings){
     refresh();Job *j=impl->find(id);
     if(!j||j->active||!j->alive||task.empty()||task.size()>65536)return false;
