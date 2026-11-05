@@ -912,6 +912,9 @@ static void leave_chat_and_exit(int master,bool english=true){
     std::string output;CHECK(terminal_until(master,output,picker));
     output.erase(0,output.find(picker));
     CHECK(terminal_until(master,output,english?"Select a number:":"请选择编号："));
+    output.clear();
+    CHECK(write(master,"0\n",2)==2);
+    CHECK(terminal_until(master,output,english?"[1] Start chat":"[1] 开始对话"));
     CHECK(write(master,"0\n",2)==2);
 }
 static void test_numeric_request(void){
@@ -1165,7 +1168,7 @@ static void test_conversation_picker(void){
     CHECK(terminal_until(master,output,"1. 整理比赛资料"));CHECK(terminal_until(master,output,"Select a number:"));
     output.clear();type_terminal(master,output,"3\n2\n1\n我的比赛笔记\n");
     CHECK(terminal_until(master,output,"1. 我的比赛笔记"));
-    output.clear();type_terminal(master,output,"5\n2\n3\n2\n1\n2\n1\n1\n2\n"+second+"\n");CHECK(terminal_until(master,output,"REPLY_TWO"));wait_for_chat_prompt(master,output,"REPLY_TWO");
+    output.clear();type_terminal(master,output,"0\n2\n3\n2\n1\n2\n1\n1\n2\n"+second+"\n");CHECK(terminal_until(master,output,"REPLY_TWO"));wait_for_chat_prompt(master,output,"REPLY_TWO");
     CHECK(write(master,"\x04",1)==1);output.clear();
     CHECK(terminal_until(master,output,"1. Draft a demo video"));
     CHECK(terminal_until(master,output,"[4] Rename conversation"));
@@ -1226,6 +1229,12 @@ static void test_background_conversations(){
     CHECK(terminal_until(master,output,"Running · First conversation"));
     output.clear();CHECK(write(master,"\x04",1)==1);
     CHECK(terminal_until(master,output,"[2] New conversation"));
+    output.clear();type_terminal(master,output,"0\n");
+    CHECK(terminal_until(master,output,"[1] Start chat"));
+    CHECK(kill(child,0)==0);
+    CHECK(output.find("Conversation activity")==std::string::npos);
+    output.clear();type_terminal(master,output,"1\n");
+    CHECK(terminal_until(master,output,"[2] New conversation"));
     output.clear();type_terminal(master,output,"2\nSecond conversation\n");
     CHECK(terminal_until(master,output,"Running · First conversation"));
     CHECK(terminal_until(master,output,"Running · Second conversation"));
@@ -1238,8 +1247,8 @@ static void test_background_conversations(){
     type_terminal(master,output,"Continue first\n");
     CHECK(terminal_until(master,output,"FOLLOW_DONE"));
     output.clear();CHECK(write(master,"\x04",1)==1);
-    CHECK(terminal_until(master,output,"[6] Main menu"));
-    output.clear();type_terminal(master,output,"6\n");
+    CHECK(terminal_until(master,output,"[0] Main menu"));
+    output.clear();type_terminal(master,output,"0\n");
     CHECK(terminal_until(master,output,"[1] Start chat"));
     CHECK(output.find("\033[?1049l")!=std::string::npos);
     CHECK(output.find("Conversation activity")==std::string::npos);

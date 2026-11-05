@@ -537,16 +537,15 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
     bool new_chat=false;
     while(interrupted!=SIGTERM&&!input_closed){
         const int count=static_cast<int>(items.size());
-        const int create=count+1,rename=count+2,remove=count+3,back=count+4;
+        const int create=count+1,rename=count+2,remove=count+3;
         int choice=create;
         if(!new_chat){
             puts(tr("\n选择对话（仅本次运行保留）"));
             if(items.empty())puts(tr("还没有对话。"));
             for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+1,title_of(items[i]));
-            printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [%d] 返回主菜单\n  [0] 退出\n"),create,rename,remove,back);
-            choice=number(jobs,back);
-            if(choice<0||choice==back)return;
-            if(choice==0){input_closed=true;return;}
+            printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [0] 返回主菜单\n"),create,rename,remove);
+            choice=number(jobs,remove);
+            if(choice<=0)return;
         }
         new_chat=false;
         if(choice==rename||choice==remove){
