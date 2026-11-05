@@ -358,7 +358,25 @@ static void test_context_and_validation(void){
     json_object_put(data);
     app_cleanup(&a);
 }
-/* A local HTTP server; no external model or real credential. */ static pid_t fake_server(App *a,const char **responses,int count,int http_status=200,int delay_ms=0){
+static void test_tool_configuration(){
+    App a=fresh();a.shell=true;a.desktop=true;
+    JsonPtr enabled(schemas(&a));CHECK(alen(enabled.get())==9);
+    // Mutating one caller's schema must not change validation or other callers.
+    json_object_object_del(get(get(get(at(enabled.get(),0),"function"),"parameters"),"properties"),"path");
+    JsonPtr untouched(schemas(&a));
+    CHECK(get(get(get(get(at(untouched.get(),0),"function"),"parameters"),"properties"),"path"));
+    JsonPtr empty(obj()),result(tool_call(&a,"list_files",empty.get()));CHECK(tool_failed(result.get()));
+    a.shell=false;a.desktop=false;
+    JsonPtr disabled(schemas(&a));CHECK(alen(disabled.get())==5);
+    JsonPtr shell_args(obj());put(shell_args.get(),"command",str("exit 0"));
+    result.reset(tool_call(&a,"run_shell",shell_args.get()));CHECK(tool_failed(result.get()));
+    JsonPtr desktop_args(obj());put(desktop_args.get(),"app",str(""));
+    result.reset(tool_call(&a,"desktop_snapshot",desktop_args.get()));CHECK(tool_failed(result.get()));
+    a.shell=true;enabled.reset(schemas(&a));CHECK(alen(enabled.get())==6);
+    a.shell=false;enabled.reset(schemas(&a));CHECK(alen(enabled.get())==5);
+    app_cleanup(&a);
+}
+/* A local HTTP server; no external model or real credential. */ static pid_t fake_server(App *a,const char **responses,int count,int http_status=200,int delay_ms=0,bool keep_alive=false){
     int fd=socket(AF_INET,SOCK_STREAM,0);
     CHECK(fd>=0);
     struct sockaddr_in address{};
@@ -375,19 +393,22 @@ static void test_context_and_validation(void){
     CHECK(child>=0);
     if(!child){
         alarm(12);
+        FILE *stream=nullptr;
         for(int i=0;i<count;i++){
-            int client=accept(fd,NULL,NULL);
-            if(client<0)_exit(2);
-            FILE *stream=fdopen(client,"r+");
-            if(!stream)_exit(2);
+            if(!stream){
+                int client=accept(fd,NULL,NULL);
+                if(client<0)_exit(2);
+                stream=fdopen(client,"r+");
+                if(!stream)_exit(2);
+            }
             char *line=NULL;
             size_t cap=0;
             long content_length=0;
-            char request_path[1024]="";
+            char request_path[1024]="",method[16]="";
             J *capture=obj();
             if(getline(&line,&cap,stream)<0)_exit(2);
-            sscanf(line,"%*s %1023s",request_path);
-            put(capture,"path",str(request_path));
+            sscanf(line,"%15s %1023s",method,request_path);
+            put(capture,"path",str(request_path));put(capture,"method",str(method));
             while(getline(&line,&cap,stream)>0&&strcmp(line,"\r\n")){
                 if(!strncasecmp(line,"Content-Length:",15))content_length=strtol(line+15,NULL,10);
                 if(!strncasecmp(line,"Authorization:",14))put(capture,"authorization",str(line));
@@ -407,8 +428,10 @@ static void test_context_and_validation(void){
             if(atomic_file(path,data,strlen(data),0600))_exit(2);
             json_object_put(capture);
             if(delay_ms)usleep(static_cast<useconds_t>(delay_ms)*1000);
-            fprintf(stream,"HTTP/1.1 %d Test\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",http_status,strlen(responses[i]),responses[i]);
-            fclose(stream);
+            bool reuse=keep_alive&&i+1<count;
+            fprintf(stream,"HTTP/1.1 %d Test\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: %s\r\n\r\n%s",http_status,strlen(responses[i]),reuse?"keep-alive":"close",responses[i]);
+            fflush(stream);
+            if(!reuse){fclose(stream);stream=nullptr;}
         }
         close(fd);
         _exit(0);
@@ -431,6 +454,35 @@ static void server_done(pid_t child){
     int status;
     CHECK(waitpid(child,&status,0)==child);
     CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+}
+static void test_http_reuse(){
+    App a=fresh();json_object_put(a.config);a.config=config("reuse","openai");
+    const char *responses[]={"{\"ok\":true}","{\"ok\":true}","{\"ok\":true}","{\"ok\":true}"};
+    // The fixture accepts one TCP connection for all four requests.
+    pid_t server=fake_server(&a,responses,4,200,0,true);
+    JsonPtr payload(obj());put(payload.get(),"request",str("first"));
+    JsonPtr result(api_request(&a,a.config,"/chat/completions",payload.get()));CHECK(bget(result.get(),"ok"));
+    put(a.config,"protocol",str("anthropic"));put(a.config,"api_key",str("native-test-key"));
+    put(a.config,"anthropic_version",str("2023-06-01"));put(a.config,"max_tokens",json_object_new_int(4096));
+    put(payload.get(),"request",str("second"));
+    result.reset(api_request(&a,a.config,"/messages",payload.get()));CHECK(bget(result.get(),"ok"));
+    result.reset(api_request(&a,a.config,"/models",nullptr));CHECK(bget(result.get(),"ok"));
+    put(a.config,"protocol",str("openai"));put(a.config,"api_key",str("changed-test-key"));
+    result.reset(api_request(&a,a.config,"/models",nullptr));CHECK(bget(result.get(),"ok"));
+    server_done(server);
+    for(int i=0;i<4;i++){
+        JsonPtr request(capture(&a,i));bool native=i==1||i==2;
+        CHECK(!strcmp(sget(request.get(),"method"),i<2?"POST":"GET"));
+        CHECK((get(request.get(),"body")!=nullptr)==(i<2));
+        CHECK((get(request.get(),"authorization")!=nullptr)==!native);
+        CHECK((get(request.get(),"key")!=nullptr)==native);
+        CHECK((get(request.get(),"version")!=nullptr)==native);
+        if(i==0)CHECK(strstr(sget(request.get(),"authorization"),"fake-test-key"));
+        if(native)CHECK(strstr(sget(request.get(),"key"),"native-test-key"));
+        if(i==3)CHECK(strstr(sget(request.get(),"authorization"),"changed-test-key"));
+        if(i<2)CHECK(!strcmp(sget(get(request.get(),"body"),"request"),i?"second":"first"));
+    }
+    app_cleanup(&a);
 }
 static J *model_call(const char *id,const char *name,J *arguments){
     JsonPtr input(arguments);
@@ -1330,6 +1382,8 @@ int main(int argc,char **argv){
     CHECK(mkdtemp(directory));
     strcpy(sandbox,directory);
     test_mcp();
+    test_http_reuse();
+    test_tool_configuration();
     test_approval_modes();
     test_reasoning_modes();
     test_assisted_worker();

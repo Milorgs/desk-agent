@@ -11,13 +11,14 @@
 #include <sys/types.h>
 #include <cstdint>
 #include "platform.hpp"
+#include "http.hpp"
 #include <memory>
 #include <atomic>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.6.0"
+#define VERSION "1.6.1"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -40,6 +41,7 @@ struct App {
     const char *state="等待任务";
     void *desktop_data=nullptr;
     void *mcp_data=nullptr;
+    CurlHandle api_http{};
 };
 extern std::atomic<int> interrupted;
 extern std::atomic<bool> input_closed;

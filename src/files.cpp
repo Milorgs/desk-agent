@@ -318,56 +318,71 @@ static void definition(J *tools,const char *name,const char *description,const c
     put(t,"function",f);
     add(tools,t);
 }
-J *schemas(App *a){
-    J *tools=arr();
-    const char *path[]={
-        "path"
-    }
-    ,*write[]={
-        "path","content","expected_sha256"
-    }
-    ,*cmd[]={
-        "command"
-    }
-    ,*search[]={
-        "path","query"
-    }
-    ,*edit[]={
-        "path","old_text","new_text","expected_sha256"
-    }
-    ,*app[]={
-        "app"
-    }
-    ,*act[]={
-        "ref","action"
-    }
-    ,*text[]={
-        "ref","text"
-    };
-    definition(tools,"list_files","List up to 200 immediate workspace entries. Explore relevant directories before guessing file names.",path,1);
-    definition(tools,"search_text","Recursively locate literal text with file paths and line numbers. Skips symlinks, protected files, common dependency/build directories and non-UTF-8 or >64 KB files. Up to 50 matching lines, 1000 files, depth 16, 8 MB, 3 seconds; inspect truncated and skipped before claiming absence. Narrow path to continue.",search,2);
-    definition(tools,"read_file","Read a complete UTF-8 file (max 64 KB) and its SHA256. Required before editing an existing file; search snippets are not sufficient.",path,1);
-    definition(tools,"edit_file","Replace one unique exact text occurrence in an existing file. Prefer this for small edits. Supply SHA256 from read_file; use longer old_text if ambiguous. Preserves other bytes and creates a backup. Result verified means bytes were read back, not that the user's goal or tests passed.",edit,4);
-    definition(tools,"write_file","Create a UTF-8 file or replace its entire contents. Prefer edit_file for small changes. Read existing file first and supply SHA256; null only for a new file. Original bytes are backed up and new bytes read back. Verify the task's actual behavior separately.",write,3);
-    if(a->shell)definition(tools,"run_shell",
+static J *builtin_tools(){
+    // Immutable catalog: construct once; callers receive their own JSON copies.
+    static const JsonPtr catalog([]{
+        J *tools=arr();
+        const char *path[]={
+            "path"
+        }
+        ,*write[]={
+            "path","content","expected_sha256"
+        }
+        ,*cmd[]={
+            "command"
+        }
+        ,*search[]={
+            "path","query"
+        }
+        ,*edit[]={
+            "path","old_text","new_text","expected_sha256"
+        }
+        ,*app[]={
+            "app"
+        }
+        ,*act[]={
+            "ref","action"
+        }
+        ,*text[]={
+            "ref","text"
+        };
+        definition(tools,"list_files","List up to 200 immediate workspace entries. Explore relevant directories before guessing file names.",path,1);
+        definition(tools,"search_text","Recursively locate literal text with file paths and line numbers. Skips symlinks, protected files, common dependency/build directories and non-UTF-8 or >64 KB files. Up to 50 matching lines, 1000 files, depth 16, 8 MB, 3 seconds; inspect truncated and skipped before claiming absence. Narrow path to continue.",search,2);
+        definition(tools,"read_file","Read a complete UTF-8 file (max 64 KB) and its SHA256. Required before editing an existing file; search snippets are not sufficient.",path,1);
+        definition(tools,"edit_file","Replace one unique exact text occurrence in an existing file. Prefer this for small edits. Supply SHA256 from read_file; use longer old_text if ambiguous. Preserves other bytes and creates a backup. Result verified means bytes were read back, not that the user's goal or tests passed.",edit,4);
+        definition(tools,"write_file","Create a UTF-8 file or replace its entire contents. Prefer edit_file for small changes. Read existing file first and supply SHA256; null only for a new file. Original bytes are backed up and new bytes read back. Verify the task's actual behavior separately.",write,3);
+        definition(tools,"run_shell",
 #ifdef _WIN32
-        "Execute noninteractive Windows PowerShell in the workspace, 30s timeout. Use PowerShell syntax, not bash. There is no sandbox. Calls do not share variables or working-directory changes. Do not start persistent/background services. Inspect exit_code, timed_out and output to verify the result.",
+            "Execute noninteractive Windows PowerShell in the workspace, 30s timeout. Use PowerShell syntax, not bash. There is no sandbox. Calls do not share variables or working-directory changes. Do not start persistent/background services. Inspect exit_code, timed_out and output to verify the result.",
 #else
-        "Execute noninteractive bash in workspace, 30s timeout, no sandbox. Do not start persistent/background services. Separate calls do not preserve cd or variables. Inspect exit_code, timed_out and output; on failure diagnose and change approach rather than repeating. A successful command alone does not prove task completion.",
+            "Execute noninteractive bash in workspace, 30s timeout, no sandbox. Do not start persistent/background services. Separate calls do not preserve cd or variables. Inspect exit_code, timed_out and output; on failure diagnose and change approach rather than repeating. A successful command alone does not prove task completion.",
 #endif
-        cmd,1);
-    if(a->desktop){
+            cmd,1);
         definition(tools,"desktop_snapshot","Read apps with empty app, then exact app name for controls. Text is sent to model API.",app,1);
         definition(tools,"desktop_action","Invoke an action advertised by current snapshot. Re-snapshot after action.",act,2);
         definition(tools,"desktop_set_text","Replace entire editable control text. Re-snapshot to verify.",text,2);
+        return tools;
+    }());
+    return catalog.get();
+}
+static bool tool_enabled(const App &app,const char *name){
+    if(!strcmp(name,"run_shell"))return app.shell;
+    if(!strncmp(name,"desktop_",8))return app.desktop;
+    return true;
+}
+J *schemas(App *a){
+    JsonPtr tools(arr());
+    J *catalog=builtin_tools();
+    for(size_t i=0;i<alen(catalog);i++){
+        J *item=at(catalog,i);
+        if(tool_enabled(*a,sget(get(item,"function"),"name")))add(tools.get(),copy(item));
     }
-    JsonPtr external(mcp_tools(*a));
-    for(size_t i=0;i<alen(external.get());i++)add(tools,copy(at(external.get(),i)));
-    return tools;
+    mcp_append_tools(*a,tools.get());
+    return tools.release();
 }
 J *tool_call(App *a,const char *name,J *args){
     if(!strncmp(name,"mcp_",4))return mcp_call(*a,name,args);
-    J *defs=schemas(a),*spec=NULL;
+    J *defs=builtin_tools(),*spec=NULL;
     for(size_t i=0;i<alen(defs);i++){
         J *f=get(at(defs,i),"function");
         if(!strcmp(sget(f,"name"),name)){
@@ -375,8 +390,7 @@ J *tool_call(App *a,const char *name,J *args){
             break;
         }
     }
-    if(!spec||!json_object_is_type(args,json_type_object)){
-        json_object_put(defs);
+    if(!spec||!tool_enabled(*a,name)||!json_object_is_type(args,json_type_object)){
         return err(tr("未知或未启用的工具，或参数不是对象。"));
     }
     J *properties=get(spec,"properties");
@@ -387,7 +401,6 @@ J *tool_call(App *a,const char *name,J *args){
         if(!json_object_object_get_ex(args,key,&value)||(!json_object_is_type(value,json_type_string)&&!(value==NULL&&nullable)))valid=false;
         if(json_object_is_type(value,json_type_string)&&(size_t)json_object_get_string_len(value)!=strlen(json_object_get_string(value)))valid=false;
     }
-    json_object_put(defs);
     if(!valid)return err(tr("工具参数缺失、多余或类型不正确。"));
     std::unique_ptr<ResourceLock> lock;
     if(!strcmp(name,"write_file")||!strcmp(name,"edit_file")||!strcmp(name,"run_shell")){

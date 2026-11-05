@@ -114,23 +114,18 @@ struct Client {
     void close_remote() noexcept {
         if(session.empty()||!*sget(config.get(),"url"))return;
         try{
-            std::unique_ptr<CURL,decltype(&curl_easy_cleanup)> handle(curl_easy_init(),curl_easy_cleanup);
+            CurlHandle handle(curl_easy_init());
             if(!handle)return;
-            curl_slist *raw=nullptr;
-            auto append=[&](const std::string &value){
-                auto *next=curl_slist_append(raw,value.c_str());
-                if(!next){curl_slist_free_all(raw);raw=nullptr;throw Failure("Could not allocate MCP headers.");}
-                raw=next;
-            };
-            append("Mcp-Session-Id: "+session);
-            if(!version.empty())append("MCP-Protocol-Version: "+version);
-            J *headers=get(config.get(),"headers");
-            if(headers){json_object_object_foreach(headers,key,value){append(std::string(key)+": "+json_object_get_string(value));}}
-            std::unique_ptr<curl_slist,decltype(&curl_slist_free_all)> owned(raw,curl_slist_free_all);
+            HttpHeaders headers;
+            headers.append("Mcp-Session-Id: "+session);
+            if(!version.empty())headers.append("MCP-Protocol-Version: "+version);
+            J *configured=get(config.get(),"headers");
+            if(configured){json_object_object_foreach(configured,key,value){headers.append(std::string(key)+": "+json_object_get_string(value));}}
+            CurlRequest request(handle.get());
             auto discard=+[](char *,size_t size,size_t count,void *)->size_t{return size*count;};
             curl_easy_setopt(handle.get(),CURLOPT_URL,sget(config.get(),"url"));
             curl_easy_setopt(handle.get(),CURLOPT_CUSTOMREQUEST,"DELETE");
-            curl_easy_setopt(handle.get(),CURLOPT_HTTPHEADER,raw);
+            curl_easy_setopt(handle.get(),CURLOPT_HTTPHEADER,headers.get());
             curl_easy_setopt(handle.get(),CURLOPT_CONNECTTIMEOUT_MS,500L);
             curl_easy_setopt(handle.get(),CURLOPT_TIMEOUT_MS,1000L);
             curl_easy_setopt(handle.get(),CURLOPT_NOSIGNAL,1L);
@@ -259,17 +254,16 @@ struct Client {
         auto &app=*static_cast<App *>(pointer);check_exit(app);progress_tick(&app);return interrupted?1:0;
     }
     JsonPtr http(J *message,long id,bool notification){
-        std::unique_ptr<CURL,decltype(&curl_easy_cleanup)> handle(curl_easy_init(),curl_easy_cleanup);
+        CurlHandle handle(curl_easy_init());
         if(!handle)throw Failure("Could not initialize MCP HTTP client.");
         std::string body=encoded(message);Transfer transfer{*this,id,notification,{},{},{},{},{},JsonPtr{},0,false};
-        curl_slist *raw=nullptr;
-        auto header=[&](const std::string &value){auto *next=curl_slist_append(raw,value.c_str());if(!next){curl_slist_free_all(raw);raw=nullptr;throw Failure("Could not allocate MCP HTTP headers.");}raw=next;};
-        header("Content-Type: application/json");header("Accept: application/json, text/event-stream");
-        if(!session.empty())header("Mcp-Session-Id: "+session);
-        if(!version.empty())header("MCP-Protocol-Version: "+version);
-        J *headers=get(config.get(),"headers");if(headers){json_object_object_foreach(headers,key,value){header(std::string(key)+": "+json_object_get_string(value));}}
-        std::unique_ptr<curl_slist,decltype(&curl_slist_free_all)> owned(raw,curl_slist_free_all);
-        CURL *curl=handle.get();curl_easy_setopt(curl,CURLOPT_URL,sget(config.get(),"url"));curl_easy_setopt(curl,CURLOPT_HTTPHEADER,raw);
+        HttpHeaders headers;
+        headers.append("Content-Type: application/json");headers.append("Accept: application/json, text/event-stream");
+        if(!session.empty())headers.append("Mcp-Session-Id: "+session);
+        if(!version.empty())headers.append("MCP-Protocol-Version: "+version);
+        J *configured=get(config.get(),"headers");if(configured){json_object_object_foreach(configured,key,value){headers.append(std::string(key)+": "+json_object_get_string(value));}}
+        CURL *curl=handle.get();CurlRequest request(curl);
+        curl_easy_setopt(curl,CURLOPT_URL,sget(config.get(),"url"));curl_easy_setopt(curl,CURLOPT_HTTPHEADER,headers.get());
         curl_easy_setopt(curl,CURLOPT_POSTFIELDS,body.c_str());curl_easy_setopt(curl,CURLOPT_POSTFIELDSIZE,static_cast<long>(body.size()));
         curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,10L);curl_easy_setopt(curl,CURLOPT_TIMEOUT_MS,static_cast<long>(iget(config.get(),"timeoutMs",60000)));
         curl_easy_setopt(curl,CURLOPT_NOSIGNAL,1L);curl_easy_setopt(curl,CURLOPT_FOLLOWLOCATION,0L);
@@ -404,15 +398,19 @@ bool mcp_prepare(App &app,bool explicit_test,const char *only){
         app.mcp_data=registry.release();progress_clear(&app);return true;
     }catch(const std::exception &error){progress_clear(&app);seterr(&app,error.what());return false;}
 }
-J *mcp_tools(App &app){
-    J *tools=arr();auto *registry=static_cast<Registry *>(app.mcp_data);
+void mcp_append_tools(App &app,J *tools){
+    auto *registry=static_cast<Registry *>(app.mcp_data);
     if(registry)for(const auto &[name,tool]:registry->tools){(void)name;add(tools,copy(tool.definition.get()));}
-    return tools;
+}
+J *mcp_tools(App &app){
+    JsonPtr tools(arr());mcp_append_tools(app,tools.get());return tools.release();
 }
 J *mcp_call(App &app,const char *name,J *arguments){
     auto *registry=static_cast<Registry *>(app.mcp_data);
-    if(!registry||!registry->tools.count(name)||!json_object_is_type(arguments,json_type_object))return err("Unknown MCP tool or invalid arguments.");
-    auto &tool=registry->tools.at(name);
+    if(!registry||!json_object_is_type(arguments,json_type_object))return err("Unknown MCP tool or invalid arguments.");
+    auto found=registry->tools.find(name);
+    if(found==registry->tools.end())return err("Unknown MCP tool or invalid arguments.");
+    auto &tool=found->second;
     std::string preview="MCP "+tool.client->name+" / "+tool.original+"\n"+encoded(arguments);
     if(!approve(&app,preview.c_str())){J *result=err("MCP operation was not approved.");put(result,"denied",json_object_new_boolean(true));return result;}
     try{

@@ -34,7 +34,7 @@ static int transfer_progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl
     (void)v;
     return interrupted?1:0;
 }
-J *api_request(App *a,J *c,const char *endpoint,J *payload){
+J *api_request(App *a,J *c,const char *endpoint,J *payload) try {
     if(config_valid(a,c))return NULL;
     char url[8192];
     if(snprintf(url,sizeof url,"%s%s",sget(c,"base_url"),endpoint)>=(int)sizeof url){
@@ -43,32 +43,19 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
     }
     bool native=!strcmp(sget(c,"protocol"),"anthropic");
     const char *body=payload?json_object_to_json_string_ext(payload,JSON_C_TO_STRING_PLAIN):NULL;
+    if(!a->api_http)a->api_http.reset(curl_easy_init());
+    if(!a->api_http){seterr(a,tr("无法初始化 HTTP。"));return nullptr;}
     for(int attempt=0;attempt<3;attempt++){
-        CURL *h=curl_easy_init();
-        if(!h){
-            seterr(a,tr("无法初始化 HTTP。"));
-            return NULL;
-        }
+        CURL *h=a->api_http.get();
         Buffer b;
-        struct curl_slist *headers=NULL;
-        headers=curl_slist_append(headers,"Accept: application/json");
-        headers=curl_slist_append(headers,"Content-Type: application/json");
-        char *auth=NULL;
-        if(asprintf(&auth,native?"x-api-key: %s":"Authorization: Bearer %s",sget(c,"api_key"))<0){
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(h);
-            seterr(a,tr("无法分配请求头内存。"));
-            return NULL;
-        }
-        headers=curl_slist_append(headers,auth);
-        free(auth);
-        if(native){
-            char version[128];
-            snprintf(version,sizeof version,"anthropic-version: %s",sget(c,"anthropic_version"));
-            headers=curl_slist_append(headers,version);
-        }
+        HttpHeaders headers;
+        headers.append("Accept: application/json");
+        headers.append("Content-Type: application/json");
+        headers.append(std::string(native?"x-api-key: ":"Authorization: Bearer ")+sget(c,"api_key"));
+        if(native)headers.append(std::string("anthropic-version: ")+sget(c,"anthropic_version"));
+        CurlRequest request(h);
         curl_easy_setopt(h,CURLOPT_URL,url);
-        curl_easy_setopt(h,CURLOPT_HTTPHEADER,headers);
+        curl_easy_setopt(h,CURLOPT_HTTPHEADER,headers.get());
         curl_easy_setopt(h,CURLOPT_FOLLOWLOCATION,0L);
         curl_easy_setopt(h,CURLOPT_CONNECTTIMEOUT,10L);
         curl_easy_setopt(h,CURLOPT_TIMEOUT,60L);
@@ -85,8 +72,6 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         CURLcode rc=curl_easy_perform(h);
         long status=0;
         curl_easy_getinfo(h,CURLINFO_RESPONSE_CODE,&status);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(h);
         if(rc!=CURLE_OK){
             seterr(a,interrupted?tr("请求已取消。"):b.oversized?tr("API 响应超过大小限制。"):tr("API 连接失败或超时；未自动重发请求。"));
             return NULL;
@@ -125,6 +110,9 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         return NULL;
     }
     return NULL;
+}catch(const std::bad_alloc &){
+    seterr(a,tr("无法分配请求头内存。"));
+    return nullptr;
 }
 static void block_message(J *history,const char *role,J *blocks){
     size_t n=alen(history);

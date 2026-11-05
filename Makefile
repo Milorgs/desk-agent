@@ -9,14 +9,22 @@ ifneq ($(ATSPI),)
 CPPFLAGS += -DWITH_ATSPI
 endif
 CORE = src/mcp.cpp src/common.cpp src/platform.cpp src/tasks_ui.cpp src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
+CORE_OBJ = $(CORE:%.cpp=build/obj/%.o)
+APP_OBJ = build/obj/src/main.o
+TEST_OBJ = build/obj/tests/test.o
+DEPFILES = $(CORE_OBJ:.o=.d) $(APP_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+.DELETE_ON_ERROR:
 .PHONY: all clean test test-mcp-http sanitize install
 all: build/desk
 build:
 	mkdir -p build
-build/desk: $(CORE) src/main.cpp src/desk.hpp src/tasks.hpp src/platform.hpp src/mcp.hpp | build
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) $(CORE) src/main.cpp $(LDFLAGS) $(LDLIBS) -lutil -o $@
-build/test: $(CORE) tests/test.cpp src/desk.hpp src/tasks.hpp src/platform.hpp src/mcp.hpp | build
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) $(CORE) tests/test.cpp $(LDFLAGS) $(LDLIBS) -lutil -o $@
+build/obj/%.o: %.cpp
+	mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) -MMD -MP -c $< -o $@
+build/desk: $(CORE_OBJ) $(APP_OBJ) | build
+	$(CXX) $(CXXFLAGS) $(WARN) $^ $(LDFLAGS) $(LDLIBS) -lutil -o $@
+build/test: $(CORE_OBJ) $(TEST_OBJ) | build
+	$(CXX) $(CXXFLAGS) $(WARN) $^ $(LDFLAGS) $(LDLIBS) -lutil -o $@
 test: build/desk build/test
 	./build/test
 test-mcp-http: build/desk
@@ -28,3 +36,5 @@ install: build/desk
 	./install.sh
 clean:
 	rm -rf build
+
+-include $(DEPFILES)
