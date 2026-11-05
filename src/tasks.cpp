@@ -171,18 +171,7 @@ bool Tasks::resume(int id,const std::string &task){
     return true;
 }
 char *Tasks::readline(const char *prompt){
-    if(input_closed)return nullptr;
-    if(!isatty(STDIN_FILENO))return input(prompt,nullptr,false);
-    fputs(prompt,stdout);fflush(stdout);
-    for(;;){
-        refresh();
-        std::vector<pollfd> fds{{STDIN_FILENO,POLLIN,0}};
-        for(const auto &j:impl->jobs)if(j.alive){fds.push_back({j.master,POLLIN,0});fds.push_back({j.events,POLLIN,0});}
-        int ready=poll(fds.data(),fds.size(),200);
-        if(interrupted)return nullptr;
-        if(ready<0&&errno!=EINTR)return nullptr;
-        if(fds[0].revents&(POLLIN|POLLHUP))return input("",nullptr,false);
-    }
+    return editable_input(prompt,nullptr,false,[this]{refresh();});
 }
 std::string Tasks::output(int id,bool *truncated){refresh();Job *j=impl->find(id);if(!j)return {};if(truncated)*truncated=j->truncated;return j->output;}
 bool Tasks::decide(int id,bool allow){refresh();Job *j=impl->find(id);return j&&j->active&&j->state=="等待确认"&&write_all(j->master,allow?"1\n":"2\n");}

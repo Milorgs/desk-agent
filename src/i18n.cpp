@@ -6,6 +6,7 @@ namespace {
 bool english=false;
 struct Translation {const char *zh,*en;};
 constexpr Translation catalog[]={
+    {"输入超过 64 KB，请缩短后重试。","Input exceeds 64 KB. Please shorten it and try again."},
     {"请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消：","Approval required: [1] Allow [2] Deny [3] Show full operation [0] Cancel: "},
     {"正在思考…","Thinking..."},
     {"正在读取文件…","Reading files..."},

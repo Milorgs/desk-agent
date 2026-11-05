@@ -16,7 +16,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.5.2"
+#include <functional>
+#define VERSION "1.5.3"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -65,6 +66,9 @@ int path_suffix(char out[PATH_MAX],const char *base,const char *suffix);
 int mkdirs(const char *path,unsigned int mode);
 int atomic_file(const char *path,const void *data,size_t len,unsigned int mode);
 char *input(const char *prompt,const char *fallback,bool secret);
+#ifndef _WIN32
+char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle);
+#endif
 enum class Operation { Other, FileEdit };
 bool approval_required(const App &app,Operation operation=Operation::Other);
 const char *permission_name(const App &app);

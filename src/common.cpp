@@ -11,7 +11,14 @@
 std::atomic<int> interrupted{0};
 std::atomic<bool> input_closed{false};
 void progress_clear(App *app){
-    if(app->progress_visible){fputs("\r                              \r",stdout);fflush(stdout);app->progress_visible=false;}
+    if(app->progress_visible){
+#ifdef _WIN32
+        fputs("\r                              \r",stdout);
+#else
+        fputs("\r\033[2K",stdout);
+#endif
+        fflush(stdout);app->progress_visible=false;
+    }
 }
 void progress(App *app,const char *text){
     progress_clear(app);

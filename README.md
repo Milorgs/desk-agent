@@ -2,7 +2,7 @@
 
 Linux / Windows AI 电脑助手。在终端输入 `desk`，用自然语言搜索和修改文件、执行命令，或通过桌面控件操作应用。支持保存多套模型配置，切换 OpenAI接口和 Anthropic接口。
 
-当前版本 **1.5.2**。操作过程默认显示简短进度，交互使用 Ctrl+D 退出。新增六档推理选择与三种批准模式。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 集成测试使用本地模拟服务，真实模型和真实桌面操作仍需用户环境联调。
+当前版本 **1.5.3**。修复中文退格、长行编辑和输入残留，任务执行时提前输入的文字会保留到下一轮。操作过程默认显示简短进度，交互使用 Ctrl+D 退出。新增六档推理选择与三种批准模式。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 集成测试使用本地模拟服务，真实模型和真实桌面操作仍需用户环境联调。
 
 ## Windows 安装
 
@@ -20,10 +20,10 @@ Windows 使用 PowerShell 执行命令；桌面使用 UI Automation，适合提�
 
 ## Linux 安装
 
-需要支持 C++20 的编译器、Make、pkg-config、libcurl、json-c 和 OpenSSL 开发库。AT-SPI 开发库可选：检测到时编译桌面功能，否则文件、API 和终端功能仍可使用。
+需要支持 C++20 的编译器、Make、pkg-config、libcurl、json-c、OpenSSL 和 GNU Readline 开发库。AT-SPI 开发库可选：检测到时编译桌面功能，否则文件、API 和终端功能仍可使用。
 
-- Arch Linux：`base-devel pkgconf curl json-c openssl at-spi2-core`
-- Ubuntu/Debian：`build-essential pkg-config libcurl4-openssl-dev libjson-c-dev libssl-dev libatspi2.0-dev`
+- Arch Linux：`base-devel pkgconf curl json-c openssl readline at-spi2-core`
+- Ubuntu/Debian：`build-essential pkg-config libcurl4-openssl-dev libjson-c-dev libssl-dev libatspi2.0-dev libreadline-dev`
 
 在仓库目录执行：
 
@@ -98,6 +98,9 @@ desk --lang zh
 ```
 
 新建对话或切换模型会清空前台历史。
+
+Linux 交互输入支持中文与常见 emoji 的退格、方向键、Delete 和 Ctrl+U 清空。长输入在单行横向滚动，避免换行后留下旧字符；调整终端窗口尺寸时重绘当前输入。等待模型或命令期间提前输入的文字会在下一轮恢复，进度行不会覆盖它们。输入不保存到系统命令历史，密钥继续隐藏输入。实现使用 [GNU Readline 回调接口](https://tiswww.case.edu/php/chet/readline/readline.html#Alternate-Interface)，等待键盘时仍收集后台任务输出。
+
 
 “设置”中按数字选择界面语言、桌面工具、批准模式、推理模式、编辑当前模型配置、切换模型 ID，以及连接测试。模型 ID 可以从在线列表按编号选择，也可以手动填写。连接测试会产生少量 API 用量。
 

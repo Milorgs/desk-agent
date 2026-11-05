@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <unistd.h>
+#include <termios.h>
 #endif
 #include <ctype.h>
 #include <algorithm>
@@ -199,7 +200,27 @@ static const char *activity(const char *name){
     if(!strcmp(name,"run_shell"))return tr("正在执行命令…");
     return tr("正在操作桌面…");
 }
+#ifndef _WIN32
+// Queued typing stays in the terminal input buffer while progress is drawn.
+// An approval prompt temporarily lets Readline render its own input line.
+struct OperationEcho {
+    struct termios saved{};bool changed=false;
+    explicit OperationEcho(const App &app){
+        if(app.task_events<0&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)&&!tcgetattr(STDIN_FILENO,&saved)){
+            struct termios mode=saved;mode.c_lflag&=~ECHO;
+#ifdef IUTF8
+            mode.c_iflag|=IUTF8;
+#endif
+            changed=!tcsetattr(STDIN_FILENO,TCSANOW,&mode);
+        }
+    }
+    ~OperationEcho(){if(changed)tcsetattr(STDIN_FILENO,TCSANOW,&saved);}
+};
+#endif
 int run_task(App *a,const char *task){
+#ifndef _WIN32
+    OperationEcho input_echo(*a);
+#endif
     std::unique_ptr<ResourceLock> desktop_lock;
     if(a->desktop){
         desktop_lock=std::make_unique<ResourceLock>(*a,true);

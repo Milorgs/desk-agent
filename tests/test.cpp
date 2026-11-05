@@ -6,6 +6,8 @@
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <pty.h>
+#include <termios.h>
+#include <algorithm>
 #include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -664,10 +666,10 @@ static void test_menu(void){
         execl("./build/desk","desk","--workspace",a.root,(char *)NULL);
         _exit(127);
     }
-    const char *keys="3\n0\n\x04";
+    const char *keys="3\n0\n";
     CHECK(write(master,keys,strlen(keys))==(ssize_t)strlen(keys));
     char output[16384];
-    size_t used=0;
+    size_t used=0;bool eof_sent=false;
     double until=monotime()+5;
     while(used+1<sizeof output&&monotime()<until){
         struct pollfd p={
@@ -679,6 +681,8 @@ static void test_menu(void){
             ssize_t n=read(master,output+used,sizeof output-used-1);
             if(n<=0)break;
             used+=(size_t)n;
+            std::string text(output,used);auto first=text.find("请选择编号：");
+            if(!eof_sent&&first!=std::string::npos&&text.find("请选择编号：",first+1)!=std::string::npos){CHECK(write(master,"\x04",1)==1);eof_sent=true;}
         }
     }
     output[used]=0;
@@ -792,10 +796,18 @@ static void test_parallel_resources(void){
     }
     server_done(server);app_cleanup(&a);
 }
+static std::string terminal_text(const std::string &bytes){
+    std::string text;
+    for(size_t i=0;i<bytes.size();){
+        if(bytes[i]=='\x1b'&&i+1<bytes.size()&&bytes[i+1]=='['){i+=2;while(i<bytes.size()&&(static_cast<unsigned char>(bytes[i])<0x40||static_cast<unsigned char>(bytes[i])>0x7e))i++;if(i<bytes.size())i++;}
+        else text+=bytes[i++];
+    }
+    return text;
+}
 static bool terminal_until(int fd,std::string &output,const char *needle){
     double until=monotime()+8;
     while(monotime()<until){
-        if(output.find(needle)!=std::string::npos)return true;
+        if(output.find(needle)!=std::string::npos||terminal_text(output).find(needle)!=std::string::npos)return true;
         pollfd p{fd,POLLIN,0};if(poll(&p,1,100)<=0)continue;
         char buffer[4096];ssize_t n=read(fd,buffer,sizeof buffer);if(n<=0)break;
         output.append(buffer,static_cast<size_t>(n));
@@ -805,7 +817,7 @@ static bool terminal_until(int fd,std::string &output,const char *needle){
 static bool refresh_until(int fd,std::string &output,const char *needle){
     double until=monotime()+6;
     while(monotime()<until){
-        if(output.find(needle)!=std::string::npos)return true;
+        if(output.find(needle)!=std::string::npos||terminal_text(output).find(needle)!=std::string::npos)return true;
         if(write(fd,"1\n",2)!=2)return false;
         pollfd p{fd,POLLIN,0};if(poll(&p,1,100)>0){char buffer[8192];ssize_t n=read(fd,buffer,sizeof buffer);if(n>0)output.append(buffer,static_cast<size_t>(n));}
         usleep(20000);
@@ -909,8 +921,10 @@ static void test_numeric_request(void){
 static void test_numeric_settings(void){
     App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
-    const char *keys="5\n2\n1\n3\n2\n0\n6\n\x04";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    const char *keys="5\n2\n1\n3\n2\n0\n6\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
     std::string output;CHECK(terminal_until(master,output,"Approval: Approve file edits"));
+    std::string tail=output.substr(output.find("Approval: Approve file edits")+strlen("Approval: Approve file edits"));
+    CHECK(terminal_until(master,tail,"Select a number:"));CHECK(write(master,"\x04",1)==1);
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     CHECK(output.find("/desktop")==std::string::npos&&output.find("/permissions")==std::string::npos);
     CHECK(output.find("\n  Task:")==std::string::npos&&output.find("\n  Desktop:")==std::string::npos);
@@ -1063,6 +1077,51 @@ static void test_compact_approval(void){
         close(master);CHECK(ended==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/review.txt"));CHECK(access(path,F_OK)!=0);server_done(server);app_cleanup(&a);
     }
 }
+static void type_terminal(int fd,std::string &output,const std::string &text){
+    size_t used=0;double until=monotime()+12;
+    while(used<text.size()&&monotime()<until){
+        struct pollfd ready{fd,POLLIN|POLLOUT,0};CHECK(poll(&ready,1,100)>=0);
+        if(ready.revents&POLLIN){char bytes[8192];ssize_t n=read(fd,bytes,sizeof bytes);CHECK(n>0);output.append(bytes,static_cast<size_t>(n));}
+        if(ready.revents&POLLOUT){size_t count=std::min(static_cast<size_t>(128),text.size()-used);ssize_t n=write(fd,text.data()+used,count);CHECK(n>0);used+=static_cast<size_t>(n);}
+    }
+    CHECK(used==text.size());
+}
+static void test_line_editing(void){
+    App a=fresh();json_object_put(a.config);a.config=config("line-edit","openai");
+    std::vector<std::pair<std::string,std::string>> cases={
+        {"你好😀"+std::string(3,'\x7f')+"hi","hi"},
+        {"ab中cd\x1b[D\x1b[D\x7f\x1b[3~文\x05\x7f\x01首","首ab文"},
+        {std::string(400,'x')+"测试😀"+std::string(403,'\x7f')+"erase-ok","erase-ok"},
+        {std::string(5000,'z'),std::string(5000,'z')},
+        {std::string(5000,'z')+std::string(5000,'\x7f')+"clean","clean"},
+        {"\x1b[200~多行\n内容\x1b[201~","多行\n内容"}
+    };
+    std::vector<std::string> replies;std::vector<const char *> responses;
+    for(size_t i=0;i<cases.size();i++)replies.push_back(model_reply(nullptr,("EDIT_DONE_"+std::to_string(i)).c_str()));
+    for(auto &reply:replies)responses.push_back(reply.c_str());
+    pid_t server=fake_server(&a,responses.data(),static_cast<int>(responses.size()));CHECK(!save_config(&a,a.config));
+    int master=-1;struct winsize window{12,24,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){
+        setenv("TERM","xterm-256color",1);setenv("INPUTRC","/dev/null",1);struct termios mode{};if(!tcgetattr(STDIN_FILENO,&mode)){mode.c_iflag&=~IUTF8;tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
+        execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
+    }
+    std::string output;CHECK(write(master,"1\n",2)==2);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));
+    for(size_t i=0;i<cases.size();i++){
+        output.clear();type_terminal(master,output,cases[i].first+"\n");std::string done="EDIT_DONE_"+std::to_string(i);CHECK(terminal_until(master,output,done.c_str()));
+        JsonPtr request(capture(&a,static_cast<int>(i)));J *messages=get(get(request.get(),"body"),"messages");CHECK(cases[i].second==sget(at(messages,alen(messages)-1),"content"));CHECK(valid_utf8(sget(at(messages,alen(messages)-1),"content")));
+    }
+    CHECK(write(master,"\x04",1)==1);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);app_cleanup(&a);
+}
+static void test_queued_editing(void){
+    App a=fresh();json_object_put(a.config);a.config=config("queued-edit","openai");
+    std::string first=model_tool("run","run_shell",command("sleep .4")),second=model_reply(nullptr,"PRETYPE_DONE"),third=model_reply(nullptr,"QUEUED_DONE");const char *responses[]={first.c_str(),second.c_str(),third.c_str()};pid_t server=fake_server(&a,responses,3);CHECK(!save_config(&a,a.config));
+    int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    if(!child){setenv("TERM","xterm-256color",1);setenv("INPUTRC","/dev/null",1);execl("./build/desk","desk","--lang","en","--yes","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    CHECK(write(master,"1\nfirst\n",8)==8);std::string output;CHECK(terminal_until(master,output,"Running a command..."));
+    std::string queued="排队😀\x7f下一句\n";type_terminal(master,output,queued);CHECK(terminal_until(master,output,"QUEUED_DONE"));
+    JsonPtr request(capture(&a,2));J *messages=get(get(request.get(),"body"),"messages");CHECK(!strcmp(sget(at(messages,alen(messages)-1),"content"),"排队下一句"));
+    CHECK(write(master,"\x04",1)==1);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);app_cleanup(&a);
+}
 int main(void){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     char directory[]="/tmp/desk-c-test-XXXXXX";
@@ -1076,6 +1135,8 @@ int main(void){
     test_compact_output();
     test_exit_during_work();
     test_compact_approval();
+    test_line_editing();
+    test_queued_editing();
     test_utf8();
     test_files();
     test_search_and_edit();

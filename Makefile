@@ -1,7 +1,7 @@
 CXX ?= c++
 CXXFLAGS ?= -O2 -g
 WARN = -std=c++20 -Wall -Wextra -Wpedantic -Werror
-PKGS = libcurl json-c openssl
+PKGS = libcurl json-c openssl readline
 ATSPI := $(shell pkg-config --exists atspi-2 gobject-2.0 && echo atspi-2 gobject-2.0)
 CPPFLAGS += $(shell pkg-config --cflags $(PKGS) $(ATSPI)) -Isrc
 LDLIBS += $(shell pkg-config --libs $(PKGS) $(ATSPI))
