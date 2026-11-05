@@ -235,9 +235,8 @@ int run_task(App *a,const char *task){
     J *tools=tool_owner.get();
     std::vector<FailedOperation> unresolved;
     std::vector<Observation> seen;
-    int failures=0,rc=-1,requests=0,operations=0;
+    int failures=0,rc=-1;
     bool trimmed=false,desktop_unverified=false;
-    double started=monotime();
     for(int step=1;step<=a->max_steps&&!interrupted;step++){
         J *history=context(a,tools);
         if(!history)break;
@@ -247,7 +246,6 @@ int run_task(App *a,const char *task){
         }
         printf("[%d/%d] 正在请求模型…\n",step,a->max_steps);
         fflush(stdout);
-        requests++;
         J *reply=api_complete(a,a->config,history,tools);
         json_object_put(history);
         if(!reply)break;
@@ -286,7 +284,6 @@ int run_task(App *a,const char *task){
             show_call(name,args);
             double tool_started=monotime();
             J *result=tool_call(a,name,args);
-            operations++;
             bool denied=bget(result,"denied");
             bool failed=tool_failed(result),loop=repeated(seen,name,args,result);
             recovery(a,unresolved,name,args,failed);
@@ -317,7 +314,6 @@ int run_task(App *a,const char *task){
     if(!a->error[0]&&rc)seterr(a,interrupted?"任务已停止。":"达到步骤上限，任务未确认完成。");
     if(interrupted)a->state="已取消";
     else if(rc&&strcmp(a->state,"已取消"))a->state="失败";
-    printf("本轮：%d 次请求 · %d 次工具操作 · %.1f 秒\n",requests,operations,monotime()-started);
     if(a->record)save_record(a);
     return rc;
 }
