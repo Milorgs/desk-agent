@@ -220,6 +220,14 @@ struct OperationEcho {
     ~OperationEcho(){if(changed)tcsetattr(STDIN_FILENO,TCSANOW,&saved);}
 };
 #endif
+class ThinkingProgress {
+    App &app;
+public:
+    explicit ThinkingProgress(App &value):app(value){
+        app.thinking=true;app.thinking_started=monotime();task_event(app,'t');
+    }
+    ~ThinkingProgress(){app.thinking=false;task_event(app,'e');progress_clear(&app);}
+};
 int run_task(App *a,const char *task){
 #ifndef _WIN32
     OperationEcho input_echo(*a);
@@ -251,10 +259,14 @@ int run_task(App *a,const char *task){
             puts(tr("较早的任务未发送给模型，当前任务及其工具结果完整保留。"));
             trimmed=true;
         }
-        if(a->verbose)printf(tr("[%d/%d] 正在请求模型…\n"),step,a->max_steps);
-        else progress(a,tr("正在思考…"));
-        fflush(stdout);
-        J *reply=api_complete(a,a->config,history,tools);
+        J *reply=nullptr;
+        {
+            ThinkingProgress thinking(*a);
+            if(a->verbose)printf(tr("[%d/%d] 正在请求模型…\n"),step,a->max_steps);
+            else progress(a,tr("正在思考…"));
+            fflush(stdout);
+            reply=api_complete(a,a->config,history,tools);
+        }
         json_object_put(history);
         if(!reply)break;
         J *calls=get(reply,"tool_calls");

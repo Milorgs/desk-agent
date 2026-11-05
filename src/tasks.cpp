@@ -29,6 +29,8 @@ struct Job {
     int id=0,master=-1,events=-1,feed=-1;
     pid_t pid=-1;
     bool active=true,alive=true,cancelled=false,truncated=false;
+    bool thinking=false;
+    double thinking_started=0;
     std::string title,workspace,state="执行中",output;
 };
 void drain(Job &j){
@@ -100,6 +102,9 @@ void Tasks::refresh(){
     for(auto &j:impl->jobs){
         char events[128];ssize_t n;
         while((n=read(j.events,events,sizeof events))>0)for(ssize_t k=0;k<n;k++){
+            if(events[k]=='t'){j.thinking=true;j.thinking_started=monotime();continue;}
+            if(events[k]=='e'){j.thinking=false;continue;}
+            j.thinking=false;
             if(events[k]=='d'){j.state="已完成";j.active=false;}
             else if(events[k]=='f'){j.state="失败";j.active=false;}
             else if(events[k]=='c'){j.state="已取消";j.active=false;}
@@ -162,7 +167,13 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
 }
 J *Tasks::snapshot(){
     refresh();J *items=arr();
-    for(const auto &j:impl->jobs){J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));add(items,v);}return items;
+    for(const auto &j:impl->jobs){
+        J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));
+        bool thinking=j.thinking&&j.active&&!j.cancelled;
+        put(v,"thinking",json_object_new_boolean(thinking));
+        put(v,"thinking_seconds",json_object_new_double(thinking?monotime()-j.thinking_started:0));
+        add(items,v);
+    }return items;
 }
 bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
 bool Tasks::resume(int id,const std::string &task,J *settings){

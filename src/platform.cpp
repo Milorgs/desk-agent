@@ -11,6 +11,16 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
+int terminal_rows(){
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    if(!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE),&info))return 0;
+    return info.srWindow.Bottom-info.srWindow.Top+1;
+#else
+    struct winsize size{};
+    return ioctl(STDOUT_FILENO,TIOCGWINSZ,&size)==0?size.ws_row:0;
+#endif
+}
 int terminal_columns(){
 #ifdef _WIN32
     CONSOLE_SCREEN_BUFFER_INFO info{};

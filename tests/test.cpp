@@ -1260,6 +1260,53 @@ static void test_conversation_picker(void){
     app_cleanup(&a);
 }
 
+static void test_thinking_timer(){
+    // Exercise the shared foreground renderer and the background chat header.
+    for(bool interactive:{false,true}){
+        App a=fresh();json_object_put(a.config);a.config=config("thinking-timer","openai");
+        std::string path=std::string(a.root)+"/note.txt";CHECK(!atomic_file(path.c_str(),"hello",5,0600));
+        const auto first=interactive?model_reply(nullptr,"TIMER_FIRST_DONE"):model_tool("read","read_file",args("note.txt"));
+        const auto second=model_reply(nullptr,"TIMER_SECOND_DONE");
+        const char *responses[]={first.c_str(),second.c_str()};
+        pid_t server=fake_server(&a,responses,2,200,2800);CHECK(!save_config(&a,a.config));
+        int master=-1;struct winsize window{40,110,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+        if(!child){
+            setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);
+            if(interactive)execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));
+            else execl("./build/desk","desk","--lang","en","--yes","--workspace",a.root,"First timed request",static_cast<char *>(nullptr));
+            _exit(127);
+        }
+        std::string output;
+        if(interactive){
+            CHECK(terminal_until(master,output,"Select a number:"));
+            CHECK(output.find("    [1] Start chat\r\n\r\n    [2] Select model")!=std::string::npos);
+            CHECK(output.find("Conversation activity")==std::string::npos);
+            type_terminal(master,output,"1\n1\nFirst timed request\n");
+        }
+        CHECK(terminal_until(master,output,"Thinking... 0s"));
+        CHECK(terminal_until(master,output,"Thinking... 1s"));
+        if(interactive){
+            type_terminal(master,output,"secondx\x7f");
+            CHECK(terminal_until(master,output,"Thinking... 2s"));
+            CHECK(terminal_until(master,output,"TIMER_FIRST_DONE"));
+            output.clear();type_terminal(master,output,"\n");
+        }else{
+            CHECK(terminal_until(master,output,"Reading files..."));
+            output.erase(0,output.find("Reading files..."));
+        }
+        CHECK(terminal_until(master,output,"Thinking... 0s"));
+        CHECK(terminal_until(master,output,"Thinking... 1s"));
+        CHECK(terminal_until(master,output,"TIMER_SECOND_DONE"));
+        if(interactive){wait_for_chat_prompt(master,output,"TIMER_SECOND_DONE");leave_chat_and_exit(master);}
+        int status=0;CHECK(waitpid(child,&status,0)==child);close(master);
+        CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);
+        JsonPtr request(capture(&a,1));J *messages=get(get(request.get(),"body"),"messages");
+        CHECK(!strcmp(sget(at(messages,0),"content"),"First timed request"));
+        if(interactive)CHECK(!strcmp(sget(at(messages,alen(messages)-1),"content"),"second"));
+        CHECK(std::string(json_object_to_json_string(messages)).find("Thinking...")==std::string::npos);
+        app_cleanup(&a);
+    }
+}
 static void test_background_conversations(){
     App a=fresh();json_object_put(a.config);a.config=config("background-conversations","openai");
     const std::string first=model_reply(nullptr,"FIRST_DONE"),second=model_reply(nullptr,"SECOND_DONE"),follow=model_reply(nullptr,"FOLLOW_DONE");
@@ -1395,6 +1442,7 @@ int main(int argc,char **argv){
     test_line_editing();
     test_queued_editing();
     test_conversation_picker();
+    test_thinking_timer();
     test_background_conversations();
     test_utf8();
     test_files();

@@ -12,6 +12,18 @@
 #include <stdexcept>
 std::atomic<int> interrupted{0};
 std::atomic<bool> input_closed{false};
+std::string elapsed_label(double seconds){
+    auto elapsed=static_cast<unsigned long long>(seconds>0?seconds:0);
+    char text[64];
+    if(elapsed<60)snprintf(text,sizeof text,"%llus",elapsed);
+    else snprintf(text,sizeof text,"%llum %02llus",elapsed/60,elapsed%60);
+    return text;
+}
+static void draw_progress(App *app){
+    fputs(app->progress_text.c_str(),stdout);
+    if(app->thinking)printf(" %s",elapsed_label(monotime()-app->thinking_started).c_str());
+    if(app->progress_animated)printf(" %c","|/-\\"[static_cast<unsigned long long>(monotime()*5)%4]);
+}
 void progress_clear(App *app){
     if(app->progress_visible){
 #ifdef _WIN32
@@ -24,15 +36,16 @@ void progress_clear(App *app){
 }
 void progress(App *app,const char *text){
     progress_clear(app);
+    // The controller renders the live timer without touching the input line.
+    if(app->thinking&&app->conversation_worker&&app->task_events>=0)return;
+    app->progress_text=text;
     if(app->task_events<0&&isatty(1)){
-        app->progress_text=text;
-        app->progress_animated=terminal_supports_color()&&terminal_columns()>40;
+        app->progress_animated=terminal_supports_ansi()&&terminal_columns()>=24;
         app->progress_updated=monotime();
-        fputs(text,stdout);
-        if(app->progress_animated)fputs(" |",stdout);
+        draw_progress(app);
         app->progress_visible=true;
     }
-    else puts(text);
+    else {app->progress_animated=false;draw_progress(app);putchar('\n');}
     fflush(stdout);
 }
 void progress_tick(App *app){
@@ -40,8 +53,7 @@ void progress_tick(App *app){
     const double now=monotime();
     if(now-app->progress_updated<0.2)return;
     app->progress_updated=now;
-    const char frame="|/-\\"[static_cast<unsigned long long>(now*5)%4];
-    printf("\r%s %c",app->progress_text.c_str(),frame);
+    fputs("\r\033[2K",stdout);draw_progress(app);
     fflush(stdout);
 }
 J *obj(void){

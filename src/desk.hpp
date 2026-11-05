@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.6.2"
+#define VERSION "1.6.3"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -36,6 +36,8 @@ struct App {
     size_t session_revision=0;
     std::string progress_text{};
     double progress_updated=0;
+    bool thinking=false;
+    double thinking_started=0;
     int max_steps=20;
     std::intptr_t task_events=-1;
     const char *state="等待任务";
@@ -49,6 +51,7 @@ void progress(App *app,const char *text);
 void check_exit(const App &app);
 void progress_clear(App *app);
 void progress_tick(App *app);
+std::string elapsed_label(double seconds);
 const char *tr(const char *text);
 const char *language_code();
 bool set_language(const char *code);

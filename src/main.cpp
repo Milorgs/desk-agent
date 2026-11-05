@@ -12,6 +12,7 @@
 #endif
 #include <locale.h>
 #include <algorithm>
+#include <cstdarg>
 
 #ifndef _WIN32
 static void on_signal(int number){
@@ -21,6 +22,41 @@ static void on_signal(int number){
 // One alternate screen owns every interactive page, including the main menu.
 static bool interface_active=false;
 static int content_top=1;
+static bool roomy_interface(){
+    return interface_active&&terminal_columns()>=70&&terminal_rows()-content_top+1>=30;
+}
+static void menu_text(const char *text){
+    const bool roomy=roomy_interface(),color=interface_active&&terminal_supports_color();
+    bool heading=*text=='\n';
+    std::string_view rest(text);
+    do{
+        auto end=rest.find('\n');auto line=rest.substr(0,end);
+        bool option=line.starts_with("  [");
+        bool title=heading&&!line.empty()&&line.front()!=' ';
+        if(interface_active&&(option||title))fputs(title?"    ":"  ",stdout);
+        if(color&&(option||title))fputs(title?"\033[1;94m":"\033[1m",stdout);
+        fwrite(line.data(),1,line.size(),stdout);
+        if(color&&(option||title))fputs("\033[0m",stdout);
+        putchar('\n');
+        if(roomy&&(option||title))putchar('\n');
+        if(!line.empty())heading=false;
+        if(end==std::string_view::npos)break;
+        rest.remove_prefix(end+1);
+    }while(true);
+}
+static void menu_printf(const char *format,...){
+    va_list args;va_start(args,format);va_list sizing;va_copy(sizing,args);
+    int count=vsnprintf(nullptr,0,format,sizing);va_end(sizing);
+    if(count>=0){std::vector<char> text(static_cast<size_t>(count)+1);vsnprintf(text.data(),text.size(),format,args);if(count&&text[static_cast<size_t>(count)-1]=='\n')text[static_cast<size_t>(count)-1]=0;menu_text(text.data());}
+    va_end(args);
+}
+static void page_rule(){
+    if(!roomy_interface())return;
+    bool color=terminal_supports_color();
+    fputs(color?"  \033[94m":"  ",stdout);
+    for(int i=0;i<std::min(terminal_columns()-4,100);i++)fputs("─",stdout);
+    fputs(color?"\033[0m\n":"\n",stdout);
+}
 static void clear_page(){
     if(interface_active){printf("\033[%d;1H\033[J",content_top);fflush(stdout);}
 }
@@ -47,7 +83,7 @@ static char *field(const char *name,const char *fallback,bool secret){
 }
 static const char *choose_protocol(const char *current){
     clear_page();
-    puts(tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"));
+    menu_text(tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"));
     const char *fallback=!strcmp(current,"anthropic")?"2":"1";
     for(;;){
         char *choice=field(tr("请选择"),fallback,false);
@@ -56,7 +92,7 @@ static const char *choose_protocol(const char *current){
         bool quit=!strcmp(choice,"0");
         free(choice);
         if(out||quit)return out;
-        puts(tr("请输入 1、2 或 0。"));
+        menu_text(tr("请输入 1、2 或 0。"));
     }
 }
 static int configure(App *a,const char *name,const char *selected,bool fresh){
@@ -82,7 +118,7 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
     bool changed=strcmp(sget(candidate,"protocol"),protocol)!=0;
     put(candidate,"protocol",str(protocol));
     if(changed)put(candidate,"base_url",str(!strcmp(protocol,"anthropic")?"https://api.anthropic.com/v1":"https://api.openai.com/v1"));
-    puts(tr("\n密钥输入不显示，仅保存在本机私有配置文件。"));
+    menu_text(tr("\n密钥输入不显示，仅保存在本机私有配置文件。"));
     char *base=field(tr("API 地址"),sget(candidate,"base_url"),false);
     if(!base)return 0;
     bool host_changed=changed;
@@ -119,7 +155,7 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
     if(config_valid(a,candidate)){
         return -1;
     }
-    puts(tr("\n  [1] 测试连接并保存（少量 API 用量）\n  [2] 直接保存，稍后测试\n  [0] 取消"));
+    menu_text(tr("\n  [1] 测试连接并保存（少量 API 用量）\n  [2] 直接保存，稍后测试\n  [0] 取消"));
     for(;;){
         char *choice=field(tr("请选择"),"1",false);
         if(!choice)return 0;
@@ -127,17 +163,17 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
         free(choice);
         if(!action)return 0;
         if(action<0){
-            puts(tr("请输入 1、2 或 0。"));
+            menu_text(tr("请输入 1、2 或 0。"));
             continue;
         }
         if(action==1&&api_check(a,candidate)){
             return -1;
         }
-        if(action==2)puts(tr("配置尚未联网验证。"));
+        if(action==2)menu_text(tr("配置尚未联网验证。"));
         break;
     }
     int rc=save_config(a,candidate);
-    if(!rc)puts(tr("已保存并选用该模型。"));
+    if(!rc)menu_text(tr("已保存并选用该模型。"));
     return rc;
 }
 static int add_model(App *a,const char *preset){
@@ -160,26 +196,26 @@ static int select_model(App *a,Tasks &jobs){
     clear_page();
     J *profiles=get(a->store,"profiles");
     if(!json_object_object_length(profiles)){
-        puts(tr("尚未保存模型，请选择 [3] 添加模型。"));
+        menu_text(tr("尚未保存模型，请选择 [3] 添加模型。"));
         return 0;
     }
     std::vector<std::string> order;
-    puts(tr("\n选择模型："));
+    menu_text(tr("\n选择模型："));
     json_object_object_foreach(profiles,name,entry){
         order.emplace_back(name);
-        printf("  [%zu] %s (%s)\n",order.size(),sget(entry,"model"),sget(entry,"protocol"));
+        menu_printf("  [%zu] %s (%s)\n",order.size(),sget(entry,"model"),sget(entry,"protocol"));
     }
     int count=static_cast<int>(order.size());
-    if(count>1)printf(tr("  [%d] 调整模型编号\n"),count+1);
-    puts(tr("  [0] 返回"));
+    if(count>1)menu_printf(tr("  [%d] 调整模型编号\n"),count+1);
+    menu_text(tr("  [0] 返回"));
     int selected=number(jobs,count+(count>1));
     if(selected<=0)return 0;
     if(selected<=count)return activate(a,order[static_cast<size_t>(selected-1)].c_str());
 
-    puts(tr("输入要调整的模型编号（0 返回）。"));
+    menu_text(tr("输入要调整的模型编号（0 返回）。"));
     int from=number(jobs,count);
     if(from<=0)return 0;
-    puts(tr("输入该模型的新编号（0 返回）。"));
+    menu_text(tr("输入该模型的新编号（0 返回）。"));
     int to=number(jobs,count);
     if(to<=0||from==to)return 0;
     auto source=order.begin()+(from-1),target=order.begin()+(to-1);
@@ -191,11 +227,12 @@ static int number(Tasks &jobs,int maximum){
     for(;;){
         if(input_closed||interrupted==SIGTERM)return -1;
         interrupted=0;
-        std::unique_ptr<char,decltype(&free)> value(jobs.readline(tr("请选择编号：")),free);
+        std::string prompt=std::string(roomy_interface()?"    ":"")+tr("请选择编号：");
+        std::unique_ptr<char,decltype(&free)> value(jobs.readline(prompt.c_str()),free);
         if(!value){if(interrupted==SIGINT)continue;return -1;}
         char *end=nullptr;long selected=strtol(value.get(),&end,10);
         if(*value&&!*end&&selected>=0&&selected<=maximum)return static_cast<int>(selected);
-        puts(tr("请输入列表中的编号。"));
+        menu_text(tr("请输入列表中的编号。"));
     }
 }
 static std::string request_text(Tasks &jobs,const char *prompt){
@@ -204,32 +241,32 @@ static std::string request_text(Tasks &jobs,const char *prompt){
 }
 static void language_menu(App *a,Tasks &jobs){
     clear_page();
-    puts(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
+    menu_text(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
     int choice=number(jobs,2);
     if(choice==1)save_language(*a,"zh");
     else if(choice==2)save_language(*a,"en");
 }
 static void model_id_menu(App *a,Tasks &jobs){
     clear_page();
-    puts(tr("\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回"));
+    menu_text(tr("\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回"));
     int choice=number(jobs,2);std::string model;
     if(choice==1){
         JsonPtr models(api_models(a,a->config));
         if(!models){fprintf(stderr,"%s\n",a->error);return;}
-        for(size_t i=0;i<alen(models.get());i++)printf("  [%zu] %s\n",i+1,json_object_get_string(at(models.get(),i)));
-        puts(tr("  [0] 返回"));int index=number(jobs,static_cast<int>(alen(models.get())));
+        for(size_t i=0;i<alen(models.get());i++)menu_printf("  [%zu] %s\n",i+1,json_object_get_string(at(models.get(),i)));
+        menu_text(tr("  [0] 返回"));int index=number(jobs,static_cast<int>(alen(models.get())));
         if(index<=0)return;
         model=json_object_get_string(at(models.get(),static_cast<size_t>(index-1)));
     }else if(choice==2)model=request_text(jobs,tr("模型 ID（回车返回）："));
     if(model.empty())return;
     JsonPtr candidate(copy(a->config));put(candidate.get(),"model",str(model.c_str()));
     if(save_config(a,candidate.get()))fprintf(stderr,"%s\n",a->error);
-    else puts(tr("已保存新模型并清空对话。"));
+    else menu_text(tr("已保存新模型并清空对话。"));
 }
 static void approval_menu(App *a,Tasks &jobs){
     clear_page();
-    puts(tr("\n批准模式\n  [1] 请求批准\n  [2] 帮我批准\n  [3] 完全访问权限\n  [0] 返回"));
-    puts(tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。"));
+    menu_text(tr("\n批准模式\n  [1] 请求批准\n  [2] 帮我批准\n  [3] 完全访问权限\n  [0] 返回"));
+    menu_text(tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。"));
     int selected=number(jobs,3);if(selected<=0)return;
     a->yes=selected==3;a->auto_edit=selected==2;
     printf(tr("批准模式：%s（本次运行）\n"),permission_name(*a));
@@ -240,10 +277,10 @@ static void reasoning_menu(App *a,Tasks &jobs){
     const char *openai[]={"none","minimal","low","medium","high","xhigh"};
     const char *anthropic[]={"none","low","medium","high","xhigh","max"};
     const char **levels=native?anthropic:openai;
-    puts(tr("\n推理模式"));
-    for(int i=0;i<6;i++)printf("  [%d] %s (%s)\n",i+1,reasoning_name(levels[i]),levels[i]);
-    puts(tr("  [7] 恢复服务商默认（不传推理参数）\n  [0] 返回"));
-    puts(tr("仅发送接口原生参数；支持档位由模型决定，不自动更换模型、提高输出上限或降档。"));
+    menu_text(tr("\n推理模式"));
+    for(int i=0;i<6;i++)menu_printf("  [%d] %s (%s)\n",i+1,reasoning_name(levels[i]),levels[i]);
+    menu_text(tr("  [7] 恢复服务商默认（不传推理参数）\n  [0] 返回"));
+    menu_text(tr("仅发送接口原生参数；支持档位由模型决定，不自动更换模型、提高输出上限或降档。"));
     int choice=number(jobs,7);if(choice<=0)return;
     JsonPtr candidate(copy(a->config));
     if(choice==7)json_object_object_del(candidate.get(),"reasoning_effort");
@@ -254,14 +291,14 @@ static void reasoning_menu(App *a,Tasks &jobs){
 static void settings_menu(App *a,Tasks &jobs){
     clear_page();
     for(;;){
-        puts(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));
+        menu_text(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));
         int choice=number(jobs,7);if(choice<=0)return;
         if(choice==1)language_menu(a,jobs);
         else if(choice==2){
             clear_page();
-            puts(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
-            if(selected==1){a->desktop=true;puts(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
-            else if(selected==2){a->desktop=false;desktop_clear(a);puts(tr("桌面工具已关闭。"));}
+            menu_text(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
+            if(selected==1){a->desktop=true;menu_text(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
+            else if(selected==2){a->desktop=false;desktop_clear(a);menu_text(tr("桌面工具已关闭。"));}
         }else if(choice==3){
             approval_menu(a,jobs);
         }else if(choice==4){
@@ -269,9 +306,9 @@ static void settings_menu(App *a,Tasks &jobs){
             if(configure(a,name.c_str(),nullptr,false))fprintf(stderr,"%s\n",a->error);
         }else if(choice==5)model_id_menu(a,jobs);
         else if(choice==6){
-            puts(tr("发送最小工具调用测试（少量 API 用量），不发送当前会话。"));
+            menu_text(tr("发送最小工具调用测试（少量 API 用量），不发送当前会话。"));
             if(api_check(a,a->config))fprintf(stderr,"%s\n",a->error);
-            else puts(tr("连接成功，工具调用已验证。测试未操作电脑。"));
+            else menu_text(tr("连接成功，工具调用已验证。测试未操作电脑。"));
         }
         else if(choice==7)reasoning_menu(a,jobs);
         if(interrupted==SIGTERM)return;
@@ -375,6 +412,13 @@ public:
     void tick(){
         if(monotime()-checked<0.05)return;
         checked=monotime();
+        struct winsize size{};
+        if(pinned&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>0&&size.ws_col>0&&(rows!=size.ws_row||columns!=size.ws_col)){
+            rows=size.ws_row;columns=size.ws_col;
+            content_top=rows>=10&&columns>=40?6:1;
+            printf("\0337\033[%d;%dr\0338",content_top,rows);last_header.clear();
+        }
+        const bool live_header=pinned&&rows>=10&&columns>=40;
         JsonPtr states(jobs.snapshot());
         std::string header=tr("对话运行状态");
         int line=2;
@@ -382,7 +426,13 @@ public:
             J *state=nullptr;
             for(size_t i=0;i<alen(states.get());i++)if(iget(at(states.get(),i),"id",0)==item.job)state=at(states.get(),i);
             if(state&&bget(state,"active")){
-                header+="\n"+std::string(sget(state,"state"))+" · "+title_of(item);
+                bool thinking=bget(state,"thinking");
+                auto title=live_header&&thinking?clipped(title_of(item),std::max(8,columns-42)):std::string(title_of(item));
+                header+="\n"+std::string(sget(state,"state"))+" · "+title;
+                if(thinking){
+                    header+=" · "+std::string(tr("正在思考…"));
+                    if(live_header)header+=" "+elapsed_label(json_object_get_double(get(state,"thinking_seconds")));
+                }
                 line++;
             }
             if(&item==current&&item.job){
@@ -397,21 +447,16 @@ public:
                 }
             }
         }
-        struct winsize size{};
-        if(pinned&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>0&&size.ws_col>0&&(rows!=size.ws_row||columns!=size.ws_col)){
-            rows=size.ws_row;columns=size.ws_col;
-            content_top=rows>=10&&columns>=40?6:1;
-            printf("\0337\033[%d;%dr\0338",content_top,rows);last_header.clear();
-        }
         if(header==last_header)return;
         last_header=header;
-        if(pinned&&rows>=10&&columns>=40){
+        if(live_header){
             fputs("\0337",stdout);
             size_t from=0;
             for(int row=1;row<=5;row++){
                 auto end=header.find('\n',from);
                 std::string_view text=from<header.size()?std::string_view(header).substr(from,end==std::string::npos?header.size()-from:end-from):std::string_view{};
-                printf("\033[%d;1H\033[2K%s",row,clipped(text,columns).c_str());
+                bool color=terminal_supports_color()&&row==1;
+                printf("\033[%d;1H\033[2K%s%s%s",row,color?"\033[1;94m":"",clipped(text,columns).c_str(),color?"\033[0m":"");
                 from=end==std::string::npos?header.size():end+1;
             }
             fputs("\0338",stdout);fflush(stdout);
@@ -431,10 +476,10 @@ public:
             app.conversation_worker=false;
             if(item.job<0){item.job=0;return false;}
         }else if(active(item)||!item.queue.empty()){
-            if(item.queue.size()>=4){puts(tr("当前对话的待执行需求已满。"));return false;}
+            if(item.queue.size()>=4){menu_text(tr("当前对话的待执行需求已满。"));return false;}
             item.queue.push_back({task,std::move(settings)});
-            puts(tr("已排队，当前操作结束后继续。"));
-        }else if(!jobs.resume(item.job,task,settings.get())){puts(tr("无法继续此对话，请新建对话。"));return false;}
+            menu_text(tr("已排队，当前操作结束后继续。"));
+        }else if(!jobs.resume(item.job,task,settings.get())){menu_text(tr("无法继续此对话，请新建对话。"));return false;}
         item.reset_context=false;
         checked=0;tick();return true;
     }
@@ -443,17 +488,17 @@ public:
 static void mcp_menu(App *a,Tasks &jobs){
     std::string notice;
     for(;;){
-        clear_page();puts(tr("\nMCP 服务"));
+        clear_page();menu_text(tr("\nMCP 服务"));
         if(!notice.empty()){puts(notice.c_str());notice.clear();}
         JsonPtr servers(mcp_load(*a));
         if(!servers){fprintf(stderr,"%s\n",a->error);return;}
         std::vector<std::string> names;
         json_object_object_foreach(servers.get(),name,entry){
             names.emplace_back(name);
-            printf("  [%zu] %s · %s · %s\n",names.size(),name,*sget(entry,"url")?"HTTP":"stdio",tr(bget(entry,"disabled")?"已停用":"已启用"));
+            menu_printf("  [%zu] %s · %s · %s\n",names.size(),name,*sget(entry,"url")?"HTTP":"stdio",tr(bget(entry,"disabled")?"已停用":"已启用"));
         }
         int count=static_cast<int>(names.size());
-        printf(tr("\n  [%d] 导入 JSON 配置文件\n  [%d] 添加远程 MCP 地址\n  [0] 返回\n"),count+1,count+2);
+        menu_printf(tr("\n  [%d] 导入 JSON 配置文件\n  [%d] 添加远程 MCP 地址\n  [0] 返回\n"),count+1,count+2);
         int choice=number(jobs,count+2);if(choice<=0)return;
         a->error[0]=0;
         if(choice==count+1){
@@ -474,20 +519,20 @@ static void mcp_menu(App *a,Tasks &jobs){
         }else{
             const std::string name=names[static_cast<size_t>(choice-1)];J *entry=get(servers.get(),name.c_str());
             clear_page();printf("\n  MCP · %s\n",name.c_str());
-            puts(tr("  [1] 测试连接并列出工具\n  [2] 切换启用/停用\n  [3] 删除服务\n  [0] 返回"));
-            puts(tr("连接测试会启动配置中的本地程序，或连接远程服务。"));
+            menu_text(tr("  [1] 测试连接并列出工具\n  [2] 切换启用/停用\n  [3] 删除服务\n  [0] 返回"));
+            menu_text(tr("连接测试会启动配置中的本地程序，或连接远程服务。"));
             int action=number(jobs,3);
             if(action==1){
                 if(mcp_prepare(*a,true,name.c_str())){
                     JsonPtr tools(mcp_tools(*a));printf(tr("连接成功，共 %zu 个工具。\n"),alen(tools.get()));
                     for(size_t i=0;i<alen(tools.get());i++)printf("  %.*s\n",180,sget(get(at(tools.get(),i),"function"),"description"));
                 }else fprintf(stderr,"%s\n",a->error);
-                mcp_close(*a);puts(tr("  [0] 返回"));number(jobs,0);
+                mcp_close(*a);menu_text(tr("  [0] 返回"));number(jobs,0);
             }else if(action==2){
                 put(entry,"disabled",json_object_new_boolean(!bget(entry,"disabled")));
                 notice=mcp_save(*a,servers.get())?tr("MCP 设置已保存，下一条需求生效。"):a->error;
             }else if(action==3){
-                puts(tr("删除此 MCP 配置？\n  [1] 确认删除\n  [0] 取消"));
+                menu_text(tr("删除此 MCP 配置？\n  [1] 确认删除\n  [0] 取消"));
                 if(number(jobs,1)==1){json_object_object_del(servers.get(),name.c_str());notice=mcp_save(*a,servers.get())?tr("MCP 配置已删除。"):a->error;}
             }
         }
@@ -496,7 +541,7 @@ static void mcp_menu(App *a,Tasks &jobs){
 }
 static int chat_menu(App *a,Tasks &jobs){
     clear_page();
-    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"));
+    menu_text(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"));
     int choice=number(jobs,8);if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
@@ -504,7 +549,7 @@ static int chat_menu(App *a,Tasks &jobs){
     else if(choice==4){
         clear_page();
         status(a);
-        puts(tr("  [0] 返回"));
+        menu_text(tr("  [0] 返回"));
         number(jobs,0);
     }
     else if(choice==5)reasoning_menu(a,jobs);
@@ -519,13 +564,13 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
 #endif
 ){
     clear_page();
-    if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
+    if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
     printf(tr("  工作目录：%s\n"),a->root);
-    puts(tr("任务及工具结果会发送到配置的 API。"));
+    menu_text(tr("任务及工具结果会发送到配置的 API。"));
 #ifndef _WIN32
-    puts(tr(conversation?"Ctrl+D 返回选择对话并在后台继续，Ctrl+C 停止当前对话，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+    menu_text(tr(conversation?"Ctrl+D 返回选择对话并在后台继续，Ctrl+C 停止当前对话，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
 #else
-    puts(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+    menu_text(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
 #endif
 #ifndef _WIN32
     if(screen)screen->current=conversation;
@@ -569,7 +614,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
             if(selected==3){if(conversation)return true;reset_session(a);}
             clear_page();
             if(a->error[0])fprintf(stderr,"%s\n",a->error);
-            if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
+            if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
             last_modes.clear();
             continue;
         }
@@ -586,7 +631,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
 }
 static void show_token_usage(J *usage,J *config){
     if(usage)printf(tr("  累计 Token（接口报告）：%llu\n"),static_cast<unsigned long long>(model_tokens(usage,config)));
-    else puts(tr("  无法读取累计 Token 用量。"));
+    else menu_text(tr("  无法读取累计 Token 用量。"));
 }
 static void show_banner(){
     constexpr int banner_width=59;
@@ -604,10 +649,12 @@ static void show_banner(){
         "  \\__,_/\\___/____/_/|_|       \\__,_/\\__, /\\___/_/ /_/\\__/",
         "                                   /____/",
     };
-    const char *blue=color?"\033[94m":"";
+    const char *blue=color?"\033[1;94m":"";
+    int padding=roomy_interface()?2+(std::min(terminal_columns()-4,100)-banner_width)/2:0;
     putchar('\n');
-    for(const auto *row:logo)printf("%s%s%s\n",blue,row,reset);
-    printf("%*s\n\n",banner_width,"v" VERSION);
+    for(const auto *row:logo)printf("%*s%s%s%s\n",padding,"",blue,row,reset);
+    printf("%*s\n\n",banner_width+padding,"v" VERSION);
+    page_rule();
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
 #ifndef _WIN32
@@ -620,26 +667,26 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
         int choice=create;
         if(!new_chat){
             clear_page();
-            puts(tr("\n选择对话（仅本次运行保留）"));
-            if(items.empty())puts(tr("还没有对话。"));
+            menu_text(tr("\n选择对话（仅本次运行保留）"));
+            if(items.empty())menu_text(tr("还没有对话。"));
             for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+1,title_of(items[i]));
-            printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [0] 返回主菜单\n"),create,rename,remove);
+            menu_printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [0] 返回主菜单\n"),create,rename,remove);
             choice=number(jobs,remove);
             if(choice<=0)return;
         }
         new_chat=false;
         if(choice==rename||choice==remove){
             if(items.empty()){
-                puts(tr("还没有对话。"));
+                menu_text(tr("还没有对话。"));
                 continue;
             }
             bool deleting=choice==remove;
-            puts(tr(deleting?"输入上方要删除的对话编号（0 返回）。":"输入上方要重命名的对话编号（0 返回）。"));
+            menu_text(tr(deleting?"输入上方要删除的对话编号（0 返回）。":"输入上方要重命名的对话编号（0 返回）。"));
             int which=number(jobs,count);
             if(which<=0)continue;
             auto item=items.begin()+(which-1);
             if(deleting){
-                printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
+                menu_printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
                 if(number(jobs,1)==1){
                     if(item->job)jobs.cancel(item->job);
                     items.erase(item);
@@ -651,7 +698,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             continue;
         }
         if(choice==create){
-            if(config_valid(a,a->config)){puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
+            if(config_valid(a,a->config)){menu_text(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
             items.push_back({{},JsonPtr(arr()),JsonPtr(copy(a->config))});
         }
         auto selected=items.begin()+(choice-1);
@@ -689,13 +736,13 @@ static int menu(App *a){
         clear_page();
         show_banner();
         if(!notice.empty()){puts(notice.c_str());notice.clear();}
-        puts(tr("  已导入的模型"));
+        menu_text(tr("  已导入的模型"));
         JsonPtr usage(load_tokens(*a));
         J *profiles=get(a->store,"profiles");
         const char *active_model=sget(a->config,"model");
         const char *active_profile=sget(a->config,"profile");
         bool active_listed=false;
-        if(!json_object_object_length(profiles))puts(tr("    暂无已导入的模型"));
+        if(!json_object_object_length(profiles))menu_text(tr("    暂无已导入的模型"));
         else{
             size_t index=1;
             json_object_object_foreach(profiles,name,profile){
@@ -714,10 +761,11 @@ static int menu(App *a){
             if(*active_model){
                 printf(tr("  当前模型：%s\n"),active_model);
                 show_token_usage(usage.get(),a->config);
-            }else puts(tr("  当前模型：未配置"));
+            }else menu_text(tr("  当前模型：未配置"));
         }
-        if(!usage&&(active_listed||!*active_model))puts(tr("  无法读取累计 Token 用量。"));
-        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 设置\n  [5] MCP 服务\n  [0] 退出"));
+        if(!usage&&(active_listed||!*active_model))menu_text(tr("  无法读取累计 Token 用量。"));
+        page_rule();
+        menu_text(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 设置\n  [5] MCP 服务\n  [0] 退出"));
         int choice=number(jobs,5);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
@@ -732,8 +780,8 @@ static int menu(App *a){
     }
 }
 static void help(void){
-    puts(tr("运行 desk 后，使用数字菜单完成对话和设置。"));
-    puts(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
+    menu_text(tr("运行 desk 后，使用数字菜单完成对话和设置。"));
+    menu_text(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
 }
 static int run_cli(int argc,char **argv){
     setlocale(LC_ALL,"");
