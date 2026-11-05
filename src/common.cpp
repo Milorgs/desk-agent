@@ -159,7 +159,7 @@ int approve(App *a,const char *description,Operation operation){
     task_event(*a,'a');
     bool yes=false;
     for(;;){
-        const char *prompt=a->task_events>=0&&!a->conversation_worker?tr("等待你在任务菜单中确认此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
+        const char *prompt=a->task_events>=0&&!a->conversation_worker?tr("等待批准此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
         char *value=input(prompt,nullptr,false);
         if(value&&compact&&!strcmp(value,"3")){free(value);printf("\n%s\n",description);continue;}
         yes=value&&!strcmp(value,"1");free(value);break;

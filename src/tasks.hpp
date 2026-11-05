@@ -11,11 +11,9 @@ public:
     int start(App &app,const std::string &task,const std::string &workspace="");
     void refresh();
     J *snapshot();
-    void list();
     bool cancel(int id);
     bool resume(int id,const std::string &task,J *settings=nullptr);
     bool respond(int id,int answer);
-    void attach(int id);
     std::string output(int id,bool *truncated=nullptr);
     bool decide(int id,bool allow);
     char *readline(const char *prompt="\n› ");

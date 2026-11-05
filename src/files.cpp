@@ -388,7 +388,7 @@ J *tool_call(App *a,const char *name,J *args){
     std::unique_ptr<ResourceLock> lock;
     if(!strcmp(name,"write_file")||!strcmp(name,"edit_file")||!strcmp(name,"run_shell")){
         lock=std::make_unique<ResourceLock>(*a,false);
-        if(!lock->acquired()||interrupted)return err(interrupted?tr("资源等待已取消。"):tr("工作目录被占用或无法加锁，未执行操作；请进入任务管理处理待确认操作，或新建并行任务。"));
+        if(!lock->acquired()||interrupted)return err(interrupted?tr("资源等待已取消。"):tr("工作目录被占用或无法加锁，未执行操作；请返回对应对话处理待批准操作。"));
     }
     if(!strcmp(name,"list_files"))return file_list(a,sget(args,"path"));
     if(!strcmp(name,"read_file"))return file_read(a,sget(args,"path"));

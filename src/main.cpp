@@ -251,27 +251,6 @@ static void settings_menu(App *a,Tasks &jobs){
         if(interrupted==SIGTERM)return;
     }
 }
-static void task_menu(App *a,Tasks &jobs){
-    for(;;){
-        puts(tr("\n任务管理\n  [1] 新建并行任务\n  [2] 在指定目录新建任务\n  [3] 选择已有任务\n  [0] 返回"));
-        jobs.list();int choice=number(jobs,3);if(choice<=0)return;
-        if(choice==1||choice==2){
-            std::string workspace;
-            if(choice==2){workspace=request_text(jobs,tr("工作目录（回车返回）："));if(workspace.empty())continue;}
-            std::string task=request_text(jobs,tr("任务描述（回车返回）："));if(task.empty())continue;
-            int id=jobs.start(*a,task,workspace);
-            if(id<0)fprintf(stderr,"%s\n",a->error);
-            else printf(tr("已启动任务 [%d]，可继续新建或选择任务。\n"),id);
-        }else{
-            JsonPtr items(jobs.snapshot());
-            if(!alen(items.get())){puts(tr("尚无任务，请选择 [1] 新建并行任务。"));continue;}
-            for(size_t i=0;i<alen(items.get());i++)printf("  [%zu] %s · %.120s\n",i+1,sget(at(items.get(),i),"state"),sget(at(items.get(),i),"task"));
-            puts(tr("  [0] 返回"));int selected=number(jobs,static_cast<int>(alen(items.get())));
-            if(selected>0)jobs.attach(iget(at(items.get(),static_cast<size_t>(selected-1)),"id",0));
-        }
-        if(interrupted==SIGTERM)return;
-    }
-}
 struct Conversation {
     std::string title;
     JsonPtr messages,config;
@@ -434,16 +413,15 @@ public:
 };
 #endif
 static int chat_menu(App *a,Tasks &jobs){
-    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回选择对话\n  [0] 返回输入"));
-    int choice=number(jobs,8);if(choice<=0)return 0;
+    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [0] 返回输入"));
+    int choice=number(jobs,7);if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
-    else if(choice==3)task_menu(a,jobs);
-    else if(choice==4)settings_menu(a,jobs);
-    else if(choice==5)status(a);
-    else if(choice==6)reasoning_menu(a,jobs);
-    else if(choice==7)approval_menu(a,jobs);
-    else if(choice==8)return 2;
+    else if(choice==3)settings_menu(a,jobs);
+    else if(choice==4)status(a);
+    else if(choice==5)reasoning_menu(a,jobs);
+    else if(choice==6)approval_menu(a,jobs);
+    else if(choice==7)return 2;
     return interrupted==SIGTERM?-1:1;
 }
 static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
@@ -633,22 +611,21 @@ static int menu(App *a){
             }else puts(tr("  当前模型：未配置"));
         }
         if(!usage&&(active_listed||!*active_model))puts(tr("  无法读取累计 Token 用量。"));
-        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [0] 退出"));
-        int choice=number(jobs,5);
+        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 设置\n  [0] 退出"));
+        int choice=number(jobs,4);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
         int rc=0;
         if(choice==1)conversation_menu(a,jobs,conversations);
         else if(choice==2)rc=select_model(a,jobs);
         else if(choice==3)rc=add_model(a,nullptr);
-        else if(choice==4)task_menu(a,jobs);
-        else if(choice==5)settings_menu(a,jobs);
+        else if(choice==4)settings_menu(a,jobs);
         if(rc)fprintf(stderr,"%s\n",a->error);
         if(interrupted==SIGTERM)return 143;
     }
 }
 static void help(void){
-    puts(tr("运行 desk 后，使用数字菜单完成对话、任务管理和设置。"));
+    puts(tr("运行 desk 后，使用数字菜单完成对话和设置。"));
     puts(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
 }
 static int run_cli(int argc,char **argv){

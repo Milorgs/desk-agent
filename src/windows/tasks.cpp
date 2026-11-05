@@ -53,7 +53,7 @@ ResourceLock::ResourceLock(App &app,bool desktop){
         OVERLAPPED offset{};
         if(LockFileEx(handle.get(),LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&offset)){fd=reinterpret_cast<std::intptr_t>(handle.release());if(waiting)task_event(app,'r');return;}
         if(GetLastError()!=ERROR_LOCK_VIOLATION)break;
-        if(app.task_events<0){puts(tr("资源正被任务占用，请进入任务管理处理待确认操作，或新建并行任务。"));break;}
+        if(app.task_events<0){puts(tr("资源正被任务占用，请返回对应对话处理待批准操作。"));break;}
         if(!waiting){puts(tr(desktop?"等待其他任务释放桌面…":"等待同一工作目录的其他操作结束…"));fflush(stdout);task_event(app,'q');waiting=true;}
         Sleep(50);
     }
@@ -115,7 +115,6 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     int id=impl->next++;impl->jobs.push_back(std::move(job));return id;
 }
 J *Tasks::snapshot(){refresh();J *items=arr();for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);J *entry=obj();put(entry,"id",json_object_new_int(job->id));put(entry,"active",json_object_new_boolean(job->active));put(entry,"task",str(job->title.c_str()));put(entry,"state",str(tr(job->state.c_str())));put(entry,"workspace",str(job->workspace.c_str()));add(items,entry);}return items;}
-void Tasks::list(){JsonPtr items(snapshot());if(!alen(items.get()))puts(tr("尚无任务，请选择 [1] 新建并行任务。"));for(size_t i=0;i<alen(items.get());i++){J *job=at(items.get(),i);printf("[%d] %s · %.120s\n    %s\n",iget(job,"id",0),sget(job,"state"),sget(job,"task"),sget(job,"workspace"));}}
 bool Tasks::cancel(int id){refresh();Job *job=impl->find(id);if(!job)return false;std::lock_guard lock(job->mutex);if(!job->active)return false;job->cancelled=true;job->state="正在停止";return SetEvent(job->cancellation.get())!=FALSE;}
 bool Tasks::resume(int id,const std::string &task,J *settings){
     refresh();if(task.empty()||task.size()>65536)return false;size_t active=0;for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);if(job->active)active++;}if(active>=4)return false;

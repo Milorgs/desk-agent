@@ -63,7 +63,7 @@ ResourceLock::ResourceLock(App &app,bool desktop){
         }
         if(errno!=EWOULDBLOCK&&errno!=EAGAIN)break;
         // Do not block the control terminal behind a task awaiting approval.
-        if(app.task_events<0){puts(tr("资源正被任务占用，请进入任务管理处理待确认操作，或新建并行任务。"));break;}
+        if(app.task_events<0){puts(tr("资源正被任务占用，请返回对应对话处理待批准操作。"));break;}
         if(!waiting){puts(desktop?tr("等待其他任务释放桌面…"):tr("等待同一工作目录的其他操作结束…"));fflush(stdout);task_event(app,'q');waiting=true;}
         usleep(50000);
     }
@@ -163,10 +163,6 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
 J *Tasks::snapshot(){
     refresh();J *items=arr();
     for(const auto &j:impl->jobs){J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));add(items,v);}return items;
-}
-void Tasks::list(){
-    refresh();if(impl->jobs.empty())puts(tr("尚无任务，请选择 [1] 新建并行任务。"));
-    for(const auto &j:impl->jobs)printf("[%d] %s · %.120s\n    %s\n",j.id,tr(j.state.c_str()),j.title.c_str(),j.workspace.c_str());
 }
 bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
 bool Tasks::resume(int id,const std::string &task,J *settings){

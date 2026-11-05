@@ -225,7 +225,7 @@ int run_task(App *a,const char *task){
     std::unique_ptr<ResourceLock> desktop_lock;
     if(a->desktop){
         desktop_lock=std::make_unique<ResourceLock>(*a,true);
-        if(!desktop_lock->acquired()){seterr(a,tr("桌面资源等待已取消、被占用或无法加锁；请进入任务管理处理已有任务。"));a->state=interrupted?"已取消":"失败";return -1;}
+        if(!desktop_lock->acquired()){seterr(a,tr("桌面资源等待已取消、被占用或无法加锁；请返回对应对话处理已有操作。"));a->state=interrupted?"已取消":"失败";return -1;}
     }
     if(!a->messages)reset_session(a);
     J *user=obj();

@@ -815,16 +815,6 @@ static bool terminal_until(int fd,std::string &output,const char *needle){
     }
     fprintf(stderr,"Terminal transcript:\n%s\n",output.c_str());return false;
 }
-static bool refresh_until(int fd,std::string &output,const char *needle){
-    double until=monotime()+6;
-    while(monotime()<until){
-        if(output.find(needle)!=std::string::npos||terminal_text(output).find(needle)!=std::string::npos)return true;
-        if(write(fd,"1\n",2)!=2)return false;
-        pollfd p{fd,POLLIN,0};if(poll(&p,1,100)>0){char buffer[8192];ssize_t n=read(fd,buffer,sizeof buffer);if(n>0)output.append(buffer,static_cast<size_t>(n));}
-        usleep(20000);
-    }
-    fprintf(stderr,"Numeric transcript:\n%s\n",output.c_str());return false;
-}
 static void test_task_switch_approval(bool allow=true){
     App a=fresh();json_object_put(a.config);a.config=config("switch","openai");
     J *write=args("confirmed.txt");put(write,"content",str("user approved"));put(write,"expected_sha256",nullptr);
@@ -836,20 +826,26 @@ static void test_task_switch_approval(bool allow=true){
         execl("./build/desk","desk","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
     }
     std::string output;
-    const char *keys="4\n1\n创建文件\n0\n4\n3\n1\n";CHECK(::write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
-    CHECK(terminal_until(master,output,"[2] 确认待处理操作"));
-    CHECK(refresh_until(master,output,"等待你在任务菜单中确认此次操作。"));
+    const char *keys="1\n1\n创建文件\n";CHECK(::write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    CHECK(terminal_until(master,output,"[3] 查看完整操作 [0] 取消："));
     char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/confirmed.txt"));CHECK(access(path,F_OK)!=0);
-    CHECK(::write(master,"2\n",2)==2);CHECK(terminal_until(master,output,"本次操作"));
-    CHECK(::write(master,allow?"1\n":"2\n",2)==2);
-    CHECK(refresh_until(master,output,allow?"已核对":"用户拒绝写入"));
+    output.clear();CHECK(::write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"选择对话（仅本次运行保留）"));
+    output.clear();CHECK(::write(master,"1\n",2)==2);
+    CHECK(terminal_until(master,output,"[3] 查看完整操作 [0] 取消："));
+    output.clear();CHECK(::write(master,allow?"1\n":"2\n",2)==2);
+    CHECK(terminal_until(master,output,allow?"已核对":"用户拒绝写入"));
     if(allow){
-        const char *next="3\n再检查文件\n";CHECK(::write(master,next,strlen(next))==static_cast<ssize_t>(strlen(next)));
-        CHECK(terminal_until(master,output,"已继续该任务，保留原模型和对话。"));
-        CHECK(refresh_until(master,output,"继续检查完成"));
+        const char *next="再检查文件\n";CHECK(::write(master,next,strlen(next))==static_cast<ssize_t>(strlen(next)));
+        CHECK(terminal_until(master,output,"继续检查完成"));
     }
-    CHECK(output.find("/switch")==std::string::npos&&output.find("/task")==std::string::npos);
-    CHECK(::write(master,"0\n0\n\x04",5)==5);
+    CHECK(output.find("任务管理")==std::string::npos);
+    CHECK(output.find("fake-test-key")==std::string::npos);
+    output.clear();CHECK(::write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"选择对话（仅本次运行保留）"));
+    CHECK(::write(master,"0\n",2)==2);
+    CHECK(terminal_until(master,output,"[1] 开始对话"));
+    CHECK(::write(master,"0\n",2)==2);
     int status=0;double until=monotime()+5;pid_t ended=0;
     while(monotime()<until&&(ended=waitpid(child,&status,WNOHANG))==0)usleep(10000);
     if(!ended){kill(child,SIGKILL);waitpid(child,&status,0);}
@@ -887,7 +883,7 @@ static void test_english_menu(void){
     CHECK(terminal_until(master,output,"[3] Add model"));CHECK(output.find("[2] Select model")!=std::string::npos);
     CHECK(write(master,"3\n",2)==2);CHECK(terminal_until(master,output,"[1] OpenAI API"));
     CHECK(terminal_until(master,output,"[2] Anthropic API"));
-    const char *quit="0\n5\n1\n1\n0\n\x04";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
+    const char *quit="0\n4\n1\n1\n0\n\x04";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
     CHECK(terminal_until(master,output,"[1] 开始对话"));
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     app_cleanup(&a);
@@ -938,9 +934,9 @@ static void test_numeric_request(void){
 static void test_numeric_settings(void){
     App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
-    const char *keys="5\n2\n1\n3\n2\n0\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    const char *keys="4\n2\n1\n3\n2\n0\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
     std::string output;CHECK(terminal_until(master,output,"Approve file edits (this run)"));
-    CHECK(output.find("[6] View status")==std::string::npos);
+    CHECK(output.find("[6] View status")==std::string::npos);CHECK(output.find("[4] Settings")!=std::string::npos);CHECK(output.find("[4] Tasks")==std::string::npos);
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     CHECK(output.find("/desktop")==std::string::npos&&output.find("/permissions")==std::string::npos);
     CHECK(output.find("\n  Task:")==std::string::npos&&output.find("\n  Desktop:")==std::string::npos);
@@ -1014,10 +1010,10 @@ static void test_chat_mode_menu(void){
     App a=fresh();json_object_put(a.config);a.config=config("modes","openai");CHECK(!save_config(&a,a.config));
     int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
-    const char *keys="1\n1\n/\n6\n5\n/\n7\n2\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));std::string output;
+    const char *keys="1\n1\n/\n5\n5\n/\n6\n2\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));std::string output;
     CHECK(terminal_until(master,output,"Reasoning: High · Approval: Approve file edits"));CHECK(output.find("[6] Extra high (xhigh)")!=std::string::npos);CHECK(output.find("[3] Full access")!=std::string::npos);CHECK(output.find("[1] Enter a request")==std::string::npos);
-    const char *reset="/\n6\n7\n/\n7\n3\n";CHECK(write(master,reset,strlen(reset))==static_cast<ssize_t>(strlen(reset)));CHECK(terminal_until(master,output,"Reasoning: Provider default (unspecified) · Approval: Full access"));
-    const char *ask="/\n7\n1\n";CHECK(write(master,ask,strlen(ask))==static_cast<ssize_t>(strlen(ask)));CHECK(terminal_until(master,output,"Reasoning: Provider default (unspecified) · Approval: Ask for approval"));
+    const char *reset="/\n5\n7\n/\n6\n3\n";CHECK(write(master,reset,strlen(reset))==static_cast<ssize_t>(strlen(reset)));CHECK(terminal_until(master,output,"Reasoning: Provider default (unspecified) · Approval: Full access"));
+    const char *ask="/\n6\n1\n";CHECK(write(master,ask,strlen(ask))==static_cast<ssize_t>(strlen(ask)));CHECK(terminal_until(master,output,"Reasoning: Provider default (unspecified) · Approval: Ask for approval"));
     wait_for_chat_prompt(master,output,"Reasoning: Provider default (unspecified) · Approval: Ask for approval");leave_chat_and_exit(master);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     app_cleanup(&a);
 }
@@ -1032,7 +1028,7 @@ static void test_chat_exit_paths(void){
             CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));output.clear();
             if(route==1){CHECK(write(master,"\n",1)==1);CHECK(terminal_until(master,output,": "));CHECK(output.find("Approval:")==std::string::npos);}
             else if(route==2){CHECK(kill(child,SIGINT)==0);CHECK(terminal_until(master,output,": "));CHECK(output.find("Approval:")==std::string::npos);}
-            else if(route==3){CHECK(write(master,"/\n6\n",4)==4);CHECK(terminal_until(master,output,"[7] Restore provider default"));}
+            else if(route==3){CHECK(write(master,"/\n5\n",4)==4);CHECK(terminal_until(master,output,"[7] Restore provider default"));}
         }
         CHECK(kill(child,0)==0);
         if(route==4){CHECK(terminal_until(master,output,"Select a number:"));CHECK(write(master,"0\n",2)==2);}
