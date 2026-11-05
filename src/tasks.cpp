@@ -63,7 +63,7 @@ ResourceLock::ResourceLock(App &app,bool desktop){
         }
         if(errno!=EWOULDBLOCK&&errno!=EAGAIN)break;
         // Do not block the control terminal behind a task awaiting approval.
-        if(app.task_events<0){puts(tr("资源正被任务占用，请先 /switch 确认，或使用 /task 后台执行。"));break;}
+        if(app.task_events<0){puts(tr("资源正被任务占用，请进入任务管理处理待确认操作，或新建并行任务。"));break;}
         if(!waiting){puts(desktop?tr("等待其他任务释放桌面…"):tr("等待同一工作目录的其他操作结束…"));fflush(stdout);task_event(app,'q');waiting=true;}
         usleep(50000);
     }
@@ -156,7 +156,7 @@ J *Tasks::snapshot(){
     for(const auto &j:impl->jobs){J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));add(items,v);}return items;
 }
 void Tasks::list(){
-    refresh();if(impl->jobs.empty())puts(tr("尚无并行任务，使用 /task 任务描述 新建。"));
+    refresh();if(impl->jobs.empty())puts(tr("尚无任务，请选择 [1] 新建并行任务。"));
     for(const auto &j:impl->jobs)printf("[%d] %s · %.120s\n    %s\n",j.id,tr(j.state.c_str()),j.title.c_str(),j.workspace.c_str());
 }
 bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
@@ -170,9 +170,9 @@ bool Tasks::resume(int id,const std::string &task){
     j->active=true;j->cancelled=false;j->state="执行中";j->title=task;
     return true;
 }
-char *Tasks::readline(){
-    if(!isatty(STDIN_FILENO))return input("\n› ",nullptr,false);
-    printf("\n› ");fflush(stdout);
+char *Tasks::readline(const char *prompt){
+    if(!isatty(STDIN_FILENO))return input(prompt,nullptr,false);
+    fputs(prompt,stdout);fflush(stdout);
     for(;;){
         refresh();
         std::vector<pollfd> fds{{STDIN_FILENO,POLLIN,0}};
@@ -184,38 +184,35 @@ char *Tasks::readline(){
     }
 }
 void Tasks::attach(int id){
-    refresh();Job *j=impl->find(id);if(!j){puts(tr("任务编号不存在。"));return;}
-    printf(tr("\n任务 [%d]：%s\nCtrl+] 返回任务列表；Ctrl+C 停止此任务。\n"),id,j->title.c_str());
-    if(j->truncated)puts(tr("…仅保留最近 64 KB 输出。"));
-    fwrite(j->output.data(),1,j->output.size(),stdout);fflush(stdout);
-    if(!j->active)return;
-    termios old{},raw{};bool changed=!tcgetattr(STDIN_FILENO,&old);
-    if(changed){raw=old;cfmakeraw(&raw);if(tcsetattr(STDIN_FILENO,TCSANOW,&raw))changed=false;}
-    size_t shown=j->output.size();
-    while(j->active&&!interrupted){
-        // Detect a rolling-buffer truncation before rendering new output.
-        std::string prior=j->output;
+    Job *j=impl->find(id);if(!j){puts(tr("任务编号不存在。"));return;}
+    bool first=true;
+    for(;;){
         refresh();
-        if(j->output.size()>=shown&&j->output.compare(0,shown,prior,0,shown)==0){
-            fwrite(j->output.data()+shown,1,j->output.size()-shown,stdout);
-        }else if(j->output!=prior){fwrite(j->output.data(),1,j->output.size(),stdout);}
-        shown=j->output.size();fflush(stdout);
-        if(!j->active)break;
-        pollfd fd{STDIN_FILENO,POLLIN,0};
-        if(poll(&fd,1,100)>0){
-            char buffer[1024];ssize_t n=read(STDIN_FILENO,buffer,sizeof buffer);
-            if(n<=0)break;
-            bool detach=false;
-            for(ssize_t k=0;k<n;k++){
-                if(buffer[k]==29){detach=true;break;}
-                if(buffer[k]==3){cancel(id);detach=true;break;}
-                if(!write_all(j->master,std::string_view(buffer+k,1))){detach=true;break;}
+        printf(tr("\n任务 [%d]：%s · %s\n"),id,j->title.c_str(),tr(j->state.c_str()));
+        if(first){if(j->truncated)puts(tr("…仅保留最近 64 KB 输出。"));fwrite(j->output.data(),1,j->output.size(),stdout);first=false;}
+        puts(tr("\n  [1] 刷新输出\n  [2] 确认待处理操作\n  [3] 继续此任务\n  [4] 停止此任务\n  [0] 返回"));
+        std::unique_ptr<char,decltype(&free)> text(readline(tr("请选择编号：")),free);
+        if(!text||interrupted)return;
+        std::string choice=text.get();refresh();
+        if(choice=="0")return;
+        if(choice=="1")first=true;
+        else if(choice=="2"){
+            if(!j->active||j->state!="等待确认"){puts(tr("当前没有待确认的操作。"));continue;}
+            if(j->truncated)puts(tr("…仅保留最近 64 KB 输出。"));
+            fwrite(j->output.data(),1,j->output.size(),stdout);
+            puts(tr("\n本次操作\n  [1] 允许\n  [2] 拒绝\n  [0] 返回"));
+            std::unique_ptr<char,decltype(&free)> answer(readline(tr("请选择编号：")),free);
+            if(answer&&j->active&&j->state=="等待确认"){
+                if(!strcmp(answer.get(),"1"))write_all(j->master,"1\n");
+                else if(!strcmp(answer.get(),"2"))write_all(j->master,"2\n");
             }
-            if(detach)break;
-        }
+        }else if(choice=="3"){
+            if(j->active){puts(tr("请等待此任务结束后再继续。"));continue;}
+            std::unique_ptr<char,decltype(&free)> task(readline(tr("新需求（回车返回）：")),free);
+            if(task&&*task){if(resume(id,task.get()))puts(tr("已继续该任务，保留原模型和对话。"));else puts(tr("无法继续此任务，或当前活动任务已满。"));}
+        }else if(choice=="4")puts(cancel(id)?tr("已请求停止该任务。"):tr("任务不存在或已经结束。"));
+        else puts(tr("请输入列表中的编号。"));
     }
-    if(changed)tcsetattr(STDIN_FILENO,TCSANOW,&old);
-    printf(tr("\n任务 [%d]：%s\n"),id,tr(j->state.c_str()));
 }
 int task_worker(int fd){
     FILE *control=fdopen(fd,"r");if(!control)return 1;

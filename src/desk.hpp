@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.3.0"
+#define VERSION "1.4.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -37,7 +37,7 @@ const char *tr(const char *text);
 const char *language_code();
 bool set_language(const char *code);
 bool language_init(int argc,char **argv);
-bool language_command(App &app,const char *command);
+bool save_language(App &app,const char *code);
 J *obj(void);
 J *arr(void);
 J *str(const char *s);

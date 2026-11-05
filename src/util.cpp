@@ -203,9 +203,9 @@ int approve(App *a,const char *description){
     if(a->yes)return 1;
     if(!isatty(STDIN_FILENO))return 0;
     task_event(*a,'a');
-    char *v=input(tr("允许？[y/N] "),NULL,false);
+    char *v=input(a->task_events>=0?tr("等待你在任务菜单中确认此次操作。"):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消："),NULL,false);
     task_event(*a,'r');
-    int yes=v&&(!strcmp(v,"y")||!strcmp(v,"Y"));
+    int yes=v&&!strcmp(v,"1");
     free(v);
     return yes;
 }

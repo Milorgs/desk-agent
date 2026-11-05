@@ -163,164 +163,124 @@ static int select_model(App *a){
         }
     }
 }
-static void show_models(App *a){
-    J *models=api_models(a,a->config);
-    if(!models){
-        fprintf(stderr,"%s\n",a->error);
-        return;
-    }
-    for(size_t i=0;i<alen(models);i++)printf("  %s\n",json_object_get_string(at(models,i)));
-    puts(tr("使用 /model 模型名称 切换；可用 /test 检查工具调用。"));
-    json_object_put(models);
-}
-static int chat(App *a){
-    Tasks jobs;
-    puts(tr("并行任务：/task 描述 · /tasks 列表 · /switch 编号 · /cancel 编号。返回菜单或退出会停止仍在运行的并行任务。"));
-    status(a);
-    puts(tr("--lang zh|en  界面语言（也可用 /lang zh 或 /lang en 切换）"));
-    puts(tr("\n输入需求；/menu 返回菜单，/help 查看帮助，/exit 退出。任务及工具结果会发送到配置的 API。"));
+static int number(Tasks &jobs,int maximum){
     for(;;){
+        if(interrupted==SIGTERM)return -1;
         interrupted=0;
-        char *task=jobs.readline();
-        if(!task){
-            if(interrupted==SIGINT){
-                puts(tr("\n已取消，可以继续输入。"));
-                continue;
-            }
-            return 0;
-        }
-        if(!*task){
-            free(task);
-            continue;
-        }
-        if(!strcmp(task,"/exit")||!strcmp(task,"/quit")){
-            free(task);
-            return 0;
-        }
-        if(!strcmp(task,"/menu")){
-            free(task);
-            return 1;
-        }
-        if(language_command(*a,task)){}
-        else if(!strncmp(task,"/task ",6)||!strncmp(task,"/task-at ",9)){
-            std::string description,workspace;
-            if(!strncmp(task,"/task-at ",9)){
-                std::string value=task+9;auto split=value.find(" | ");
-                if(split==std::string::npos){puts(tr("用法：/task-at 工作目录 | 任务描述"));free(task);continue;}
-                workspace=value.substr(0,split);description=value.substr(split+3);
-            }else description=task+6;
-            int id=jobs.start(*a,description,workspace);
-            if(id<0)fprintf(stderr,"%s\n",a->error);
-            else printf(tr("已启动任务 [%d]，可继续添加任务；/switch %d 查看与确认操作。\n"),id,id);
-        }
-        else if(!strncmp(task,"/resume ",8)){
-            char *end=nullptr;long id=strtol(task+8,&end,10);
-            if(end==task+8||*end!=' '||id<1||id>2147483647||!jobs.resume(static_cast<int>(id),end+1))puts(tr("无法继续：请输入已结束的任务编号和新需求，或先等待其他任务释放名额。"));
-            else puts(tr("已继续该任务，保留原模型和对话。"));
-        }
-        else if(!strcmp(task,"/tasks"))jobs.list();
-        else if(!strncmp(task,"/switch ",8)||!strncmp(task,"/cancel ",8)){
-            char *end=nullptr;long id=strtol(task+8,&end,10);
-            if(*end||id<1||id>2147483647)puts(tr("请输入有效任务编号。"));
-            else if(!strncmp(task,"/switch ",8))jobs.attach(static_cast<int>(id));
-            else puts(jobs.cancel(static_cast<int>(id))?tr("已请求停止该任务。"):tr("任务不存在或已经结束。"));
-        }
-        else if(!strcmp(task,"/help")){puts(tr("--lang zh|en  界面语言（也可用 /lang zh 或 /lang en 切换）"));puts(tr("/task 描述 新建并行任务\n/task-at 目录 | 描述 在指定目录新建\n/resume 编号 新需求 继续已有任务\n/tasks 任务列表\n/switch 编号 查看与确认（Ctrl+] 返回）\n/cancel 编号 停止单个任务\n/menu 主菜单\n/new 新对话\n/status 状态\n/config 修改配置\n/provider 列出配置\n/provider 名称 切换\n/provider add 名称 添加\n/model 列出模型\n/model 名称 切换模型\n/test 连接测试\n/desktop on|off 桌面工具\n/permissions ask|auto 操作确认\n/exit 退出"));}
-        else if(!strcmp(task,"/new")){
-            reset_session(a);
-            puts(tr("已开始新对话。"));
-        }
-        else if(!strcmp(task,"/status"))status(a);
-        else if(!strcmp(task,"/config")){
-            char *name=strdup(sget(a->config,"profile"));
-            if(configure(a,name,NULL,false))fprintf(stderr,"%s\n",a->error);
-            free(name);
-        }
-        else if(!strcmp(task,"/provider")){
-            J *profiles=get(a->store,"profiles");
-            json_object_object_foreach(profiles,name,c){
-                printf("  %s / %s (%s)\n",name,sget(c,"model"),sget(c,"protocol"));
-            }
-        }
-        else if(!strncmp(task,"/provider add ",14)){
-            if(add_model(a,task+14))fprintf(stderr,"%s\n",a->error);
-        }
-        else if(!strncmp(task,"/provider ",10)){
-            if(activate(a,task+10))fprintf(stderr,"%s\n",a->error);
-            else puts(tr("已切换模型，历史对话已清空。"));
-        }
-        else if(!strcmp(task,"/model")||!strcmp(task,"/models"))show_models(a);
-        else if(!strncmp(task,"/model ",7)){
-            J *candidate=copy(a->config);
-            put(candidate,"model",str(task+7));
-            if(save_config(a,candidate))fprintf(stderr,"%s\n",a->error);
-            else puts(tr("已保存新模型并清空对话。"));
-            json_object_put(candidate);
-        }
-        else if(!strcmp(task,"/test")){
+        std::unique_ptr<char,decltype(&free)> value(jobs.readline(tr("请选择编号：")),free);
+        if(!value)return -1;
+        char *end=nullptr;long selected=strtol(value.get(),&end,10);
+        if(*value&&!*end&&selected>=0&&selected<=maximum)return static_cast<int>(selected);
+        puts(tr("请输入列表中的编号。"));
+    }
+}
+static std::string request_text(Tasks &jobs,const char *prompt){
+    std::unique_ptr<char,decltype(&free)> text(jobs.readline(prompt),free);
+    return text?text.get():"";
+}
+static void language_menu(App *a,Tasks &jobs){
+    puts(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
+    int choice=number(jobs,2);
+    if(choice==1)save_language(*a,"zh");
+    else if(choice==2)save_language(*a,"en");
+}
+static void model_id_menu(App *a,Tasks &jobs){
+    puts(tr("\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回"));
+    int choice=number(jobs,2);std::string model;
+    if(choice==1){
+        JsonPtr models(api_models(a,a->config));
+        if(!models){fprintf(stderr,"%s\n",a->error);return;}
+        for(size_t i=0;i<alen(models.get());i++)printf("  [%zu] %s\n",i+1,json_object_get_string(at(models.get(),i)));
+        puts(tr("  [0] 返回"));int index=number(jobs,static_cast<int>(alen(models.get())));
+        if(index<=0)return;
+        model=json_object_get_string(at(models.get(),static_cast<size_t>(index-1)));
+    }else if(choice==2)model=request_text(jobs,tr("模型 ID（回车返回）："));
+    if(model.empty())return;
+    JsonPtr candidate(copy(a->config));put(candidate.get(),"model",str(model.c_str()));
+    if(save_config(a,candidate.get()))fprintf(stderr,"%s\n",a->error);
+    else puts(tr("已保存新模型并清空对话。"));
+}
+static void settings_menu(App *a,Tasks &jobs){
+    for(;;){
+        puts(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 操作确认\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [0] 返回"));
+        int choice=number(jobs,6);if(choice<=0)return;
+        if(choice==1)language_menu(a,jobs);
+        else if(choice==2){
+            puts(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
+            if(selected==1){a->desktop=true;puts(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
+            else if(selected==2){a->desktop=false;desktop_clear(a);puts(tr("桌面工具已关闭。"));}
+        }else if(choice==3){
+            puts(tr("\n操作确认\n  [1] 执行前确认\n  [2] 自动批准\n  [0] 返回"));int selected=number(jobs,2);
+            if(selected==1){a->yes=false;puts(tr("已恢复操作前确认。"));}
+            else if(selected==2){a->yes=true;puts(tr("已自动批准启用工具的操作。"));}
+        }else if(choice==4){
+            std::string name=sget(a->config,"profile");
+            if(configure(a,name.c_str(),nullptr,false))fprintf(stderr,"%s\n",a->error);
+        }else if(choice==5)model_id_menu(a,jobs);
+        else if(choice==6){
             puts(tr("发送最小工具调用测试（少量 API 用量），不发送当前会话。"));
             if(api_check(a,a->config))fprintf(stderr,"%s\n",a->error);
             else puts(tr("连接成功，工具调用已验证。测试未操作电脑。"));
         }
-        else if(!strcmp(task,"/desktop on")){
-            a->desktop=true;
-            puts(tr("桌面工具已开启，目标应用文字会发送至 API。"));
+        if(interrupted==SIGTERM)return;
+    }
+}
+static void task_menu(App *a,Tasks &jobs){
+    for(;;){
+        puts(tr("\n任务管理\n  [1] 新建并行任务\n  [2] 在指定目录新建任务\n  [3] 选择已有任务\n  [0] 返回"));
+        jobs.list();int choice=number(jobs,3);if(choice<=0)return;
+        if(choice==1||choice==2){
+            std::string workspace;
+            if(choice==2){workspace=request_text(jobs,tr("工作目录（回车返回）："));if(workspace.empty())continue;}
+            std::string task=request_text(jobs,tr("任务描述（回车返回）："));if(task.empty())continue;
+            int id=jobs.start(*a,task,workspace);
+            if(id<0)fprintf(stderr,"%s\n",a->error);
+            else printf(tr("已启动任务 [%d]，可继续新建或选择任务。\n"),id);
+        }else{
+            JsonPtr items(jobs.snapshot());
+            if(!alen(items.get())){puts(tr("尚无任务，请选择 [1] 新建并行任务。"));continue;}
+            for(size_t i=0;i<alen(items.get());i++)printf("  [%zu] %s · %.120s\n",i+1,sget(at(items.get(),i),"state"),sget(at(items.get(),i),"task"));
+            puts(tr("  [0] 返回"));int selected=number(jobs,static_cast<int>(alen(items.get())));
+            if(selected>0)jobs.attach(iget(at(items.get(),static_cast<size_t>(selected-1)),"id",0));
         }
-        else if(!strcmp(task,"/desktop off")){
-            a->desktop=false;
-            desktop_clear(a);
-            puts(tr("桌面工具已关闭。"));
-        }
-        else if(!strcmp(task,"/permissions auto")){
-            a->yes=true;
-            puts(tr("已自动批准启用工具的操作。"));
-        }
-        else if(!strcmp(task,"/permissions ask")){
-            a->yes=false;
-            puts(tr("已恢复操作前确认。"));
-        }
-        else if(task[0]=='/')puts(tr("未知命令，请输入 /help。"));
-        else if(run_task(a,task))fprintf(stderr,"%s\n",a->error);
-        free(task);
+        if(interrupted==SIGTERM)return;
+    }
+}
+static int chat(App *a,Tasks &jobs){
+    status(a);
+    puts(tr("任务及工具结果会发送到配置的 API。"));
+    for(;;){
+        puts(tr("\n对话\n  [1] 输入需求\n  [2] 新建对话\n  [3] 选择模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 返回主菜单"));
+        int choice=number(jobs,6);if(choice<0)return 0;if(!choice)return 1;
+        if(choice==1){std::string task=request_text(jobs,tr("请输入需求（回车返回）："));if(!task.empty()&&run_task(a,task.c_str()))fprintf(stderr,"%s\n",a->error);}
+        else if(choice==2){reset_session(a);puts(tr("已开始新对话。"));}
+        else if(choice==3){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
+        else if(choice==4)task_menu(a,jobs);
+        else if(choice==5)settings_menu(a,jobs);
+        else if(choice==6)status(a);
         if(interrupted==SIGTERM)return 0;
     }
 }
 static int menu(App *a){
+    Tasks jobs;
     for(;;){
-        interrupted=0;
-        printf(tr("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [0] 退出\n"),VERSION,*sget(a->config,"model")?sget(a->config,"profile"):tr("未配置"),*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
-        puts(tr("--lang zh|en  界面语言（也可用 /lang zh 或 /lang en 切换）"));
-        char *choice=field(tr("请选择"),"1",false);
-        if(!choice){
-            if(interrupted==SIGINT){
-                puts(tr("\n已取消，返回主菜单。"));
-                continue;
-            }
-            return 0;
-        }
+        printf(tr("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 退出\n"),VERSION,*sget(a->config,"model")?sget(a->config,"profile"):tr("未配置"),*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
+        int choice=number(jobs,6);
+        if(choice<0){if(interrupted==SIGINT)continue;return 0;}
+        if(!choice)return 0;
         int rc=0;
-        if(language_command(*a,choice)){free(choice);continue;}
-        if(!strcmp(choice,"0")||!strcmp(choice,"/exit")){
-            free(choice);
-            return 0;
-        }
-        if(!strcmp(choice,"1")){
-            if(config_valid(a,a->config))puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));
-            else if(!chat(a)){
-                free(choice);
-                return 0;
-            }
-        }
-        else if(!strcmp(choice,"2"))rc=select_model(a);
-        else if(!strcmp(choice,"3"))rc=add_model(a,NULL);
-        else puts(tr("请输入 1、2、3 或 0。"));
-        free(choice);
+        if(choice==1){if(config_valid(a,a->config))puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));else if(!chat(a,jobs))return 0;}
+        else if(choice==2)rc=select_model(a);
+        else if(choice==3)rc=add_model(a,nullptr);
+        else if(choice==4)task_menu(a,jobs);
+        else if(choice==5)settings_menu(a,jobs);
+        else if(choice==6)status(a);
         if(rc)fprintf(stderr,"%s\n",a->error);
         if(interrupted==SIGTERM)return 143;
     }
 }
 static void help(void){
-    puts(tr("--lang zh|en  界面语言（也可用 /lang zh 或 /lang en 切换）"));
+    puts(tr("运行 desk 后，使用数字菜单完成对话、任务管理和设置。"));
     puts(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--version 查看版本\n--help 帮助"));
 }
 static int run_cli(int argc,char **argv){
@@ -436,7 +396,7 @@ static int run_cli(int argc,char **argv){
         rc=run_task(&a,task)?1:0;
         if(rc)fprintf(stderr,"%s\n",a.error);
     }
-    else chat(&a);
+    else {Tasks jobs;chat(&a,jobs);}
     cleanup:
     return interrupted==SIGTERM?143:interrupted==SIGINT?130:rc;
 }

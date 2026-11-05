@@ -24,7 +24,7 @@ J *context(App *a,J *tools){
         size_t bytes=strlen(json_object_to_json_string_ext(candidate,JSON_C_TO_STRING_PLAIN))+strlen(json_object_to_json_string_ext(tools,JSON_C_TO_STRING_PLAIN));
         if(bytes>CONTEXT_LIMIT){
             json_object_put(candidate);
-            if(!selected)seterr(a,tr("本轮超过上下文预算，请拆分任务或用 /new 开始。"));
+            if(!selected)seterr(a,tr("本轮超过上下文预算，请拆分任务或选择新建对话。"));
             break;
         }
         json_object_put(selected);selected=candidate;
@@ -193,7 +193,7 @@ int run_task(App *a,const char *task){
     std::unique_ptr<ResourceLock> desktop_lock;
     if(a->desktop){
         desktop_lock=std::make_unique<ResourceLock>(*a,true);
-        if(!desktop_lock->acquired()){seterr(a,tr("桌面资源等待已取消、被占用或无法加锁；请先 /switch 处理已有任务，或使用 /task。"));a->state=interrupted?"已取消":"失败";return -1;}
+        if(!desktop_lock->acquired()){seterr(a,tr("桌面资源等待已取消、被占用或无法加锁；请进入任务管理处理已有任务。"));a->state=interrupted?"已取消":"失败";return -1;}
     }
     if(!a->messages)reset_session(a);
     J *user=obj();

@@ -7,7 +7,6 @@ bool english=false;
 struct Translation {const char *zh,*en;};
 constexpr Translation catalog[]={
     {"等待任务","Waiting for a task"},
-    {"本轮超过上下文预算，请拆分任务或用 /new 开始。","This turn exceeds the context budget. Split the task or start with /new."},
     {"工具调用不是数组。","Tool calls must be an array."},
     {"单轮工具数量过多。","Too many tools in one response."},
     {"工具调用格式无效。","Invalid tool call format."},
@@ -35,7 +34,6 @@ constexpr Translation catalog[]={
     {" · %zu 项"," · %zu entries"},
     {" · 等待重新读取核对"," · awaiting a fresh snapshot to verify"},
     {"  …输出已截断，模型可见工具返回的输出片段。","  ...Output truncated. The model receives the output excerpt returned by the tool."},
-    {"桌面资源等待已取消、被占用或无法加锁；请先 /switch 处理已有任务，或使用 /task。","Desktop access was cancelled, is busy or could not be locked. Use /switch to handle an existing task, or use /task."},
     {"已取消","Cancelled"},
     {"执行中","Running"},
     {"较早的任务未发送给模型，当前任务及其工具结果完整保留。","Older tasks were omitted from the request. The current task and its tool results remain complete."},
@@ -140,7 +138,6 @@ constexpr Translation catalog[]={
     {"未知或未启用的工具，或参数不是对象。","Unknown or disabled tool, or arguments are not an object."},
     {"工具参数缺失、多余或类型不正确。","Tool arguments are missing, extra or of the wrong type."},
     {"资源等待已取消。","Resource wait cancelled."},
-    {"工作目录被占用或无法加锁，未执行操作；请先 /switch 处理等待确认的任务，或使用 /task。","The workspace is busy or cannot be locked. Nothing was executed. Use /switch to handle a task awaiting approval, or use /task."},
     {"用户拒绝执行，不要绕过。","The user declined execution. Do not bypass the refusal."},
     {"用户拒绝桌面操作，不要绕过。","The user declined the desktop action. Do not bypass the refusal."},
     {"\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n","\n  desk %s\n  Model: %s / %s\n  API: %s\n  Workspace: %s\n  Task: %s\n  Desktop: %s  Permissions: %s\n"},
@@ -167,20 +164,10 @@ constexpr Translation catalog[]={
     {"  [0] 返回","  [0] Back"},
     {"请选择编号：","Select a number:"},
     {"请输入列表中的编号。","Enter a number from the list."},
-    {"使用 /model 模型名称 切换；可用 /test 检查工具调用。","Use /model MODEL_ID to switch; use /test to verify tool calling."},
-    {"并行任务：/task 描述 · /tasks 列表 · /switch 编号 · /cancel 编号。返回菜单或退出会停止仍在运行的并行任务。","Parallel tasks: /task DESCRIPTION · /tasks · /switch ID · /cancel ID. Returning to the menu or exiting stops running tasks."},
-    {"\n输入需求；/menu 返回菜单，/help 查看帮助，/exit 退出。任务及工具结果会发送到配置的 API。","\nEnter a request; /menu returns to the menu, /help shows help, /exit quits. Tasks and tool results are sent to the configured API."},
-    {"\n已取消，可以继续输入。","\nCancelled. You can enter another request."},
-    {"用法：/task-at 工作目录 | 任务描述","Usage: /task-at WORKSPACE | DESCRIPTION"},
-    {"已启动任务 [%d]，可继续添加任务；/switch %d 查看与确认操作。\n","Started task [%d]. You can add more tasks; /switch %d to view and approve operations.\n"},
-    {"无法继续：请输入已结束的任务编号和新需求，或先等待其他任务释放名额。","Cannot resume: enter an ended task's ID and a new request, or wait for a free task slot."},
     {"已继续该任务，保留原模型和对话。","Resumed the task with its original model and conversation."},
-    {"请输入有效任务编号。","Enter a valid task ID."},
     {"已请求停止该任务。","Requested cancellation of this task."},
     {"任务不存在或已经结束。","The task does not exist or has already ended."},
-    {"/task 描述 新建并行任务\n/task-at 目录 | 描述 在指定目录新建\n/resume 编号 新需求 继续已有任务\n/tasks 任务列表\n/switch 编号 查看与确认（Ctrl+] 返回）\n/cancel 编号 停止单个任务\n/menu 主菜单\n/new 新对话\n/status 状态\n/config 修改配置\n/provider 列出配置\n/provider 名称 切换\n/provider add 名称 添加\n/model 列出模型\n/model 名称 切换模型\n/test 连接测试\n/desktop on|off 桌面工具\n/permissions ask|auto 操作确认\n/exit 退出","/task DESCRIPTION Start a parallel task\n/task-at DIR | DESCRIPTION Start in another workspace\n/resume ID REQUEST Continue a task\n/tasks List tasks\n/switch ID View and approve (Ctrl+] to return)\n/cancel ID Stop one task\n/menu Main menu\n/new New conversation\n/status Status\n/config Edit configuration\n/provider List configurations\n/provider NAME Switch configuration\n/provider add NAME Add configuration\n/model List models\n/model MODEL_ID Switch model\n/test Test connection\n/desktop on|off Desktop tools\n/permissions ask|auto Operation approval\n/lang zh|en Interface language\n/exit Quit"},
     {"已开始新对话。","Started a new conversation."},
-    {"已切换模型，历史对话已清空。","Switched model and cleared conversation history."},
     {"已保存新模型并清空对话。","Saved the new model and cleared conversation history."},
     {"发送最小工具调用测试（少量 API 用量），不发送当前会话。","Sending a minimal tool-calling test (small API quota). The current conversation is not sent."},
     {"连接成功，工具调用已验证。测试未操作电脑。","Connection and tool calling verified. The test did not operate the computer."},
@@ -188,12 +175,8 @@ constexpr Translation catalog[]={
     {"桌面工具已关闭。","Desktop tools disabled."},
     {"已自动批准启用工具的操作。","Enabled automatic approval for enabled tools."},
     {"已恢复操作前确认。","Restored approval before operations."},
-    {"未知命令，请输入 /help。","Unknown command. Enter /help."},
-    {"\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [0] 退出\n","\n  desk %s\n  Model: %s%s%s\n\n  [1] Start chat\n  [2] Select model\n  [3] Add model\n  [0] Exit\n"},
     {"未配置","Not configured"},
-    {"\n已取消，返回主菜单。","\nCancelled. Returning to the main menu."},
     {"请先选择 [3] 添加模型，或选择 [2] 选择模型。","Select [3] Add model, or [2] Select model first."},
-    {"请输入 1、2、3 或 0。","Enter 1, 2, 3 or 0."},
     {"desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--version 查看版本\n--help 帮助","desk [OPTIONS] [TASK|config|doctor|inspect]\nWithout a task, open the numbered menu.\n--workspace DIRECTORY\n--provider NAME\n--yes Auto-approve operations\n--no-shell Disable command tool\n--allow-desktop Enable desktop tools\n--app APPLICATION (inspect)\n--max-steps 1..100\n--record Save private session records\n--version Show version\n--help Show help"},
     {"选项缺少参数。\n","Missing option argument.\n"},
     {"未知参数，请运行 desk --help。\n","Unknown argument. Run desk --help.\n"},
@@ -215,7 +198,6 @@ constexpr Translation catalog[]={
     {"命令已取消。","Command cancelled."},
     {"命令等待失败，未自动重新执行。","Waiting for the command failed. The command was not automatically rerun."},
     {"读取命令输出失败。","Could not read command output."},
-    {"资源正被任务占用，请先 /switch 确认，或使用 /task 后台执行。","This resource is busy. Use /switch to approve a waiting task, or use /task to run in the background."},
     {"等待其他任务释放桌面…","Waiting for another task to release the desktop..."},
     {"等待同一工作目录的其他操作结束…","Waiting for other operations in this workspace to finish..."},
     {"已完成","Completed"},
@@ -228,22 +210,45 @@ constexpr Translation catalog[]={
     {"任务配置过大。","Task configuration is too large."},
     {"无法启动任务。","Could not start the task."},
     {"无法传递任务配置。","Could not send the task configuration."},
-    {"尚无并行任务，使用 /task 任务描述 新建。","No parallel tasks yet. Start one with /task DESCRIPTION."},
     {"正在停止","Stopping"},
     {"任务编号不存在。","Task ID not found."},
-    {"\n任务 [%d]：%s\nCtrl+] 返回任务列表；Ctrl+C 停止此任务。\n","\nTask [%d]: %s\nCtrl+] returns to the task list; Ctrl+C stops this task.\n"},
     {"…仅保留最近 64 KB 输出。","...Only the latest 64 KB of output is retained."},
-    {"\n任务 [%d]：%s\n","\nTask [%d]: %s\n"},
-    {"允许？[y/N] ","Allow? [y/N] "},
-    {"--lang zh|en  界面语言（也可用 /lang zh 或 /lang en 切换）","--lang zh|en  Interface language (also /lang zh or /lang en)"},
     {"语言仅影响界面，不向模型添加系统提示或语言要求。","Language affects the interface only; no system prompt or language instruction is sent to the model."},
     {"语言已切换为 English。","Language changed to English."},
     {"语言已切换为简体中文。","Language changed to Simplified Chinese."},
-    {"用法：/lang zh 或 /lang en","Usage: /lang zh or /lang en"},
     {"无法保存语言设置。","Could not save the language preference."},
     {"语言必须为 zh 或 en。\n","Language must be zh or en.\n"},
     {"%s%s：","%s%s:"},
     {"%s [%s]：","%s [%s]:"},
+    {"允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：","Allow this operation? [1] Allow [2] Deny [0] Cancel: "},
+    {"等待你在任务菜单中确认此次操作。","Awaiting your decision in the task menu."},
+    {"工作目录被占用或无法加锁，未执行操作；请进入任务管理处理待确认操作，或新建并行任务。","The workspace is busy or cannot be locked. Nothing was executed; handle pending approvals in Tasks or start a parallel task."},
+    {"\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回","\nInterface language\n  [1] Simplified Chinese\n  [2] English\n  [0] Back"},
+    {"\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回","\nChange model ID\n  [1] Select from online list\n  [2] Enter manually\n  [0] Back"},
+    {"模型 ID（回车返回）：","Model ID (Enter to go back): "},
+    {"\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 操作确认\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [0] 返回","\nSettings\n  [1] Interface language\n  [2] Desktop tools\n  [3] Operation approval\n  [4] Edit current model configuration\n  [5] Change model ID\n  [6] Test connection (small API quota)\n  [0] Back"},
+    {"\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回","\nDesktop tools\n  [1] Enable\n  [2] Disable\n  [0] Back"},
+    {"\n操作确认\n  [1] 执行前确认\n  [2] 自动批准\n  [0] 返回","\nOperation approval\n  [1] Ask before acting\n  [2] Auto-approve\n  [0] Back"},
+    {"\n任务管理\n  [1] 新建并行任务\n  [2] 在指定目录新建任务\n  [3] 选择已有任务\n  [0] 返回","\nTasks\n  [1] New parallel task\n  [2] New task in another workspace\n  [3] Select an existing task\n  [0] Back"},
+    {"工作目录（回车返回）：","Workspace (Enter to go back): "},
+    {"任务描述（回车返回）：","Task description (Enter to go back): "},
+    {"已启动任务 [%d]，可继续新建或选择任务。\n","Started task [%d]. You can start or select another task.\n"},
+    {"尚无任务，请选择 [1] 新建并行任务。","No tasks yet. Select [1] New parallel task."},
+    {"任务及工具结果会发送到配置的 API。","Tasks and tool results are sent to the configured API."},
+    {"\n对话\n  [1] 输入需求\n  [2] 新建对话\n  [3] 选择模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 返回主菜单","\nChat\n  [1] Enter a request\n  [2] New conversation\n  [3] Select model\n  [4] Tasks\n  [5] Settings\n  [6] View status\n  [0] Main menu"},
+    {"请输入需求（回车返回）：","Enter your request (Enter to go back): "},
+    {"\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 退出\n","\n  desk %s\n  Model: %s%s%s\n\n  [1] Start chat\n  [2] Select model\n  [3] Add model\n  [4] Tasks\n  [5] Settings\n  [6] View status\n  [0] Exit\n"},
+    {"运行 desk 后，使用数字菜单完成对话、任务管理和设置。","Run desk and use the numbered menus for chat, tasks and settings."},
+    {"本轮超过上下文预算，请拆分任务或选择新建对话。","This turn exceeds the context budget. Split the task or select New conversation."},
+    {"桌面资源等待已取消、被占用或无法加锁；请进入任务管理处理已有任务。","Desktop access was cancelled, is busy or cannot be locked. Handle existing tasks in Tasks."},
+    {"资源正被任务占用，请进入任务管理处理待确认操作，或新建并行任务。","The resource is busy. Handle pending approvals in Tasks, or start a parallel task."},
+    {"\n任务 [%d]：%s · %s\n","\nTask [%d]: %s · %s\n"},
+    {"\n  [1] 刷新输出\n  [2] 确认待处理操作\n  [3] 继续此任务\n  [4] 停止此任务\n  [0] 返回","\n  [1] Refresh output\n  [2] Review pending operation\n  [3] Continue this task\n  [4] Stop this task\n  [0] Back"},
+    {"当前没有待确认的操作。","There is no operation awaiting approval."},
+    {"\n本次操作\n  [1] 允许\n  [2] 拒绝\n  [0] 返回","\nThis operation\n  [1] Allow\n  [2] Deny\n  [0] Back"},
+    {"请等待此任务结束后再继续。","Wait for this task to finish before continuing it."},
+    {"新需求（回车返回）：","New request (Enter to go back): "},
+    {"无法继续此任务，或当前活动任务已满。","Cannot continue this task, or all active task slots are in use."},
 };
 std::string preference_path(){
     const char *xdg=getenv("XDG_CONFIG_HOME");
@@ -275,15 +280,13 @@ bool language_init(int argc,char **argv){
     }
     return !choice||!*choice||set_language(choice);
 }
-bool language_command(App &app,const char *command){
-    if(strcmp(command,"/lang")&&strncmp(command,"/lang ",6))return false;
-    const char *code=!strcmp(command,"/lang")?"":command+6;
-    if(strcmp(code,"zh")&&strcmp(code,"en")){puts(tr("用法：/lang zh 或 /lang en"));return true;}
+bool save_language(App &app,const char *code){
+    if(strcmp(code,"zh")&&strcmp(code,"en"))return false;
     std::string path=preference_path(),directory=path.substr(0,path.find_last_of('/'));
     JsonPtr pref(obj());put(pref.get(),"language",str(code));
     const char *bytes=json_object_to_json_string_ext(pref.get(),JSON_C_TO_STRING_PLAIN);
     if(mkdirs(directory.c_str(),0700)||atomic_file(path.c_str(),bytes,strlen(bytes),0600)){
-        seterr(&app,tr("无法保存语言设置。"));fprintf(stderr,"%s\n",app.error);return true;
+        seterr(&app,tr("无法保存语言设置。"));fprintf(stderr,"%s\n",app.error);return false;
     }
     set_language(code);
     puts(tr(!strcmp(code,"en")?"语言已切换为 English。":"语言已切换为简体中文。"));

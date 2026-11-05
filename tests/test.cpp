@@ -801,27 +801,46 @@ static bool terminal_until(int fd,std::string &output,const char *needle){
     }
     fprintf(stderr,"Terminal transcript:\n%s\n",output.c_str());return false;
 }
-static void test_task_switch_approval(void){
+static bool refresh_until(int fd,std::string &output,const char *needle){
+    double until=monotime()+6;
+    while(monotime()<until){
+        if(output.find(needle)!=std::string::npos)return true;
+        if(write(fd,"1\n",2)!=2)return false;
+        pollfd p{fd,POLLIN,0};if(poll(&p,1,100)>0){char buffer[8192];ssize_t n=read(fd,buffer,sizeof buffer);if(n>0)output.append(buffer,static_cast<size_t>(n));}
+        usleep(20000);
+    }
+    fprintf(stderr,"Numeric transcript:\n%s\n",output.c_str());return false;
+}
+static void test_task_switch_approval(bool allow=true){
     App a=fresh();json_object_put(a.config);a.config=config("switch","openai");
     J *write=args("confirmed.txt");put(write,"content",str("user approved"));put(write,"expected_sha256",nullptr);
-    std::string action=model_tool("write","write_file",write),done=model_reply(nullptr,"已核对");
-    const char *responses[]={action.c_str(),done.c_str()};pid_t server=fake_server(&a,responses,2);
+    std::string action=model_tool("write","write_file",write),done=model_reply(nullptr,"已核对"),continued=model_reply(nullptr,"继续检查完成");
+    const char *responses[]={action.c_str(),done.c_str(),continued.c_str()};pid_t server=fake_server(&a,responses,allow?3:1);
     int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){
         setenv("DESK_BASE_URL",sget(a.config,"base_url"),1);setenv("DESK_MODEL","model-test",1);setenv("DESK_API_KEY","fake-test-key",1);setenv("DESK_API_TYPE","openai",1);
         execl("./build/desk","desk","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
     }
     std::string output;
-    const char *keys="1\n/task 创建文件\n/switch 1\n";CHECK(::write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
-    CHECK(terminal_until(master,output,"允许？[y/N]"));
+    const char *keys="4\n1\n创建文件\n0\n4\n3\n1\n";CHECK(::write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    CHECK(terminal_until(master,output,"[2] 确认待处理操作"));
+    CHECK(refresh_until(master,output,"等待你在任务菜单中确认此次操作。"));
     char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/confirmed.txt"));CHECK(access(path,F_OK)!=0);
-    CHECK(::write(master,"y\n",2)==2);CHECK(terminal_until(master,output,"任务 [1]：已完成"));
-    CHECK(::write(master,"/exit\n",6)==6);
+    CHECK(::write(master,"2\n",2)==2);CHECK(terminal_until(master,output,"本次操作"));
+    CHECK(::write(master,allow?"1\n":"2\n",2)==2);
+    CHECK(refresh_until(master,output,allow?"已核对":"用户拒绝写入"));
+    if(allow){
+        const char *next="3\n再检查文件\n";CHECK(::write(master,next,strlen(next))==static_cast<ssize_t>(strlen(next)));
+        CHECK(terminal_until(master,output,"已继续该任务，保留原模型和对话。"));
+        CHECK(refresh_until(master,output,"继续检查完成"));
+    }
+    CHECK(output.find("/switch")==std::string::npos&&output.find("/task")==std::string::npos);
+    CHECK(::write(master,"0\n0\n0\n",6)==6);
     int status=0;double until=monotime()+5;pid_t ended=0;
     while(monotime()<until&&(ended=waitpid(child,&status,WNOHANG))==0)usleep(10000);
     if(!ended){kill(child,SIGKILL);waitpid(child,&status,0);}
     CHECK(ended==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);close(master);
-    char *text=read_bytes(path,100,nullptr);CHECK(text&&!strcmp(text,"user approved"));free(text);
+    char *text=read_bytes(path,100,nullptr);CHECK(allow?(text&&!strcmp(text,"user approved")):!text);free(text);
     CHECK(output.find("fake-test-key")==std::string::npos);
     server_done(server);app_cleanup(&a);
 }
@@ -830,7 +849,7 @@ static void test_language_preferences(void){
     std::string before=json_object_to_json_string_ext(a.config,JSON_C_TO_STRING_PLAIN);
     std::string store=json_object_to_json_string_ext(a.store,JSON_C_TO_STRING_PLAIN);
     J *user=obj();put(user,"role",str("user"));put(user,"content",str("Keep my request exactly."));add(a.messages,user);
-    CHECK(language_command(a,"/lang en"));CHECK(!strcmp(language_code(),"en"));
+    CHECK(save_language(a,"en"));CHECK(!strcmp(language_code(),"en"));
     CHECK(!strcmp(tr("等待任务"),"Waiting for a task"));
     CHECK(before==json_object_to_json_string_ext(a.config,JSON_C_TO_STRING_PLAIN));
     CHECK(store==json_object_to_json_string_ext(a.store,JSON_C_TO_STRING_PLAIN));
@@ -844,7 +863,7 @@ static void test_language_preferences(void){
     CHECK(!setenv("DESK_LANG","zh",1));CHECK(language_init(1,args));CHECK(!strcmp(language_code(),"zh"));
     char flag[]="--lang",english[]="en",help[]="--help";char *override_args[]={program,help,flag,english,nullptr};
     CHECK(language_init(4,override_args));CHECK(!strcmp(language_code(),"en"));
-    unsetenv("DESK_LANG");CHECK(language_command(a,"/lang zh"));CHECK(!strcmp(language_code(),"zh"));
+    unsetenv("DESK_LANG");CHECK(save_language(a,"zh"));CHECK(!strcmp(language_code(),"zh"));
     app_cleanup(&a);
 }
 static void test_english_menu(void){
@@ -854,7 +873,7 @@ static void test_english_menu(void){
     CHECK(output.find("[2] Select model")!=std::string::npos);CHECK(output.find("[3] Add model")!=std::string::npos);
     CHECK(write(master,"3\n",2)==2);CHECK(terminal_until(master,output,"[1] OpenAI API"));
     CHECK(output.find("[2] Anthropic API")!=std::string::npos);
-    const char *quit="0\n/lang zh\n0\n";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
+    const char *quit="0\n5\n1\n1\n0\n0\n";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
     CHECK(terminal_until(master,output,"[1] 开始对话"));
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     app_cleanup(&a);
@@ -867,6 +886,32 @@ static void test_no_extra_model_prompts(void){
     CHECK(!strcmp(sget(at(messages,0),"role"),"user"));CHECK(!strcmp(sget(at(messages,0),"content"),"完成任务并检查实际结果"));
     CHECK(!get(body,"system"));CHECK(!strcmp(sget(at(a.messages,alen(a.messages)-1),"content"),"Provider reply, unchanged."));
     CHECK(set_language("zh"));app_cleanup(&a);
+}
+static void test_numeric_request(void){
+    App a=fresh();json_object_put(a.config);a.config=config("numeric","openai");
+    std::string reply=model_reply(nullptr,"数字需求已收到");const char *responses[]={reply.c_str()};pid_t server=fake_server(&a,responses,1);
+    int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    if(!child){
+        setenv("DESK_BASE_URL",sget(a.config,"base_url"),1);setenv("DESK_MODEL","model-test",1);setenv("DESK_API_KEY","fake-test-key",1);setenv("DESK_API_TYPE","openai",1);
+        execl("./build/desk","desk","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
+    }
+    const char *keys="1\n1\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    std::string output;CHECK(terminal_until(master,output,"数字需求已收到"));
+    CHECK(write(master,"0\n0\n",4)==4);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    server_done(server);JsonPtr request(capture(&a,0));J *messages=get(get(request.get(),"body"),"messages");
+    CHECK(alen(messages)==1&&!strcmp(sget(at(messages,0),"role"),"user"));CHECK(!strcmp(sget(at(messages,0),"content"),"1"));
+    CHECK(output.find("[y/N]")==std::string::npos&&output.find("/help")==std::string::npos);
+    app_cleanup(&a);
+}
+static void test_numeric_settings(void){
+    App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    const char *keys="5\n2\n1\n3\n2\n0\n6\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    std::string output;CHECK(terminal_until(master,output,"Desktop: On  Permissions: Auto-approve"));
+    int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    CHECK(output.find("/desktop")==std::string::npos&&output.find("/permissions")==std::string::npos);
+    char path[PATH_MAX];CHECK(!path_suffix(path,a.config_dir,"/settings.json"));CHECK(access(path,F_OK)!=0);
+    app_cleanup(&a);
 }
 int main(void){
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -890,9 +935,12 @@ int main(void){
     test_parallel_tasks();
     test_parallel_resources();
     test_task_switch_approval();
+    test_task_switch_approval(false);
     test_language_preferences();
     test_english_menu();
     test_no_extra_model_prompts();
+    test_numeric_request();
+    test_numeric_settings();
     curl_global_cleanup();
     printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu/parallel/resume/approval/locks integration.\n",checks);
     return 0;

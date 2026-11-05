@@ -14,7 +14,7 @@ public:
     bool cancel(int id);
     bool resume(int id,const std::string &task);
     void attach(int id);
-    char *readline();
+    char *readline(const char *prompt="\n› ");
 };
 class ResourceLock {
     int fd=-1;
