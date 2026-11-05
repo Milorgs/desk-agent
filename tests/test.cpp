@@ -342,8 +342,8 @@ static void test_context_and_validation(void){
     add(a.messages,m);
     J *defs=schemas(&a),*ctx=context(&a,defs);
     CHECK(ctx);
-    CHECK(alen(ctx)==14);
-    CHECK(alen(a.messages)==22);
+    CHECK(alen(ctx)==13);
+    CHECK(alen(a.messages)==21);
     CHECK(!strcmp(sget(at(ctx,alen(ctx)-1),"content"),"current"));
     json_object_put(ctx);
     json_object_put(defs);
@@ -629,7 +629,7 @@ static void test_anthropic_loop(void){
     CHECK(get(r,"version"));
     CHECK(!strcmp(sget(r,"path"),"/v1/messages"));
     J *body=get(r,"body"),*messages=get(body,"messages");
-    CHECK(get(body,"system"));
+    CHECK(!get(body,"system"));
     J *previous=at(messages,alen(messages)-2);
     CHECK(!strcmp(sget(at(get(previous,"content"),0),"signature"),"signed-value"));
     J *last=at(messages,alen(messages)-1);
@@ -743,7 +743,7 @@ static void test_parallel_tasks(void){
         int first=jobs.start(a,"alpha 独立任务"),second=jobs.start(a,"beta 独立任务");
         CHECK(first==1&&second==2);
         CHECK(await_state(jobs,first,"已完成"));CHECK(await_state(jobs,second,"已完成"));
-        CHECK(!jobs.cancel(first));CHECK(alen(a.messages)==1);
+        CHECK(!jobs.cancel(first));CHECK(alen(a.messages)==0);
         CHECK(jobs.resume(first,"followup 继续原任务"));CHECK(!jobs.resume(first,"任务仍在执行"));
         CHECK(await_state(jobs,first,"已完成"));
     }
@@ -825,6 +825,49 @@ static void test_task_switch_approval(void){
     CHECK(output.find("fake-test-key")==std::string::npos);
     server_done(server);app_cleanup(&a);
 }
+static void test_language_preferences(void){
+    App a=fresh();json_object_put(a.config);a.config=config("unchanged-model","openai");
+    std::string before=json_object_to_json_string_ext(a.config,JSON_C_TO_STRING_PLAIN);
+    std::string store=json_object_to_json_string_ext(a.store,JSON_C_TO_STRING_PLAIN);
+    J *user=obj();put(user,"role",str("user"));put(user,"content",str("Keep my request exactly."));add(a.messages,user);
+    CHECK(language_command(a,"/lang en"));CHECK(!strcmp(language_code(),"en"));
+    CHECK(!strcmp(tr("等待任务"),"Waiting for a task"));
+    CHECK(before==json_object_to_json_string_ext(a.config,JSON_C_TO_STRING_PLAIN));
+    CHECK(store==json_object_to_json_string_ext(a.store,JSON_C_TO_STRING_PLAIN));
+    CHECK(alen(a.messages)==1&&!strcmp(sget(at(a.messages,0),"content"),"Keep my request exactly."));
+    char path[PATH_MAX];CHECK(!path_suffix(path,a.config_dir,"/ui.json"));
+    char *text=read_bytes(path,4096,nullptr);CHECK(text);JsonPtr pref(json_tokener_parse(text));free(text);
+    CHECK(json_object_object_length(pref.get())==1);CHECK(!strcmp(sget(pref.get(),"language"),"en"));
+    CHECK(!path_suffix(path,a.config_dir,"/settings.json"));CHECK(access(path,F_OK)!=0);
+    unsetenv("DESK_LANG");char program[]="desk";char *args[]={program,nullptr};
+    CHECK(set_language("zh"));CHECK(language_init(1,args));CHECK(!strcmp(language_code(),"en"));
+    CHECK(!setenv("DESK_LANG","zh",1));CHECK(language_init(1,args));CHECK(!strcmp(language_code(),"zh"));
+    char flag[]="--lang",english[]="en",help[]="--help";char *override_args[]={program,help,flag,english,nullptr};
+    CHECK(language_init(4,override_args));CHECK(!strcmp(language_code(),"en"));
+    unsetenv("DESK_LANG");CHECK(language_command(a,"/lang zh"));CHECK(!strcmp(language_code(),"zh"));
+    app_cleanup(&a);
+}
+static void test_english_menu(void){
+    App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    std::string output;CHECK(terminal_until(master,output,"[1] Start chat"));
+    CHECK(output.find("[2] Select model")!=std::string::npos);CHECK(output.find("[3] Add model")!=std::string::npos);
+    CHECK(write(master,"3\n",2)==2);CHECK(terminal_until(master,output,"[1] OpenAI API"));
+    CHECK(output.find("[2] Anthropic API")!=std::string::npos);
+    const char *quit="0\n/lang zh\n0\n";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
+    CHECK(terminal_until(master,output,"[1] 开始对话"));
+    int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    app_cleanup(&a);
+}
+static void test_no_extra_model_prompts(void){
+    App a=fresh();CHECK(set_language("en"));
+    CHECK(!workflow(&a,{model_reply(nullptr,"Provider reply, unchanged.")}));
+    JsonPtr request(capture(&a,0));J *body=get(request.get(),"body"),*messages=get(body,"messages");
+    CHECK(!strcmp(sget(body,"model"),"model-test"));CHECK(alen(messages)==1);
+    CHECK(!strcmp(sget(at(messages,0),"role"),"user"));CHECK(!strcmp(sget(at(messages,0),"content"),"完成任务并检查实际结果"));
+    CHECK(!get(body,"system"));CHECK(!strcmp(sget(at(a.messages,alen(a.messages)-1),"content"),"Provider reply, unchanged."));
+    CHECK(set_language("zh"));app_cleanup(&a);
+}
 int main(void){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     char directory[]="/tmp/desk-c-test-XXXXXX";
@@ -847,6 +890,9 @@ int main(void){
     test_parallel_tasks();
     test_parallel_resources();
     test_task_switch_approval();
+    test_language_preferences();
+    test_english_menu();
+    test_no_extra_model_prompts();
     curl_global_cleanup();
     printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu/parallel/resume/approval/locks integration.\n",checks);
     return 0;

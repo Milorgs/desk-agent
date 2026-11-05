@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.2.1"
+#define VERSION "1.3.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -33,6 +33,11 @@ struct App {
     void *desktop_data=nullptr;
 };
 extern volatile sig_atomic_t interrupted;
+const char *tr(const char *text);
+const char *language_code();
+bool set_language(const char *code);
+bool language_init(int argc,char **argv);
+bool language_command(App &app,const char *command);
 J *obj(void);
 J *arr(void);
 J *str(const char *s);

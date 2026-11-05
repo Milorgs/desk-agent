@@ -99,42 +99,42 @@ static int normalize(App *a,J *c){
     curl_url_cleanup(u);
     free(url);
     if(!valid){
-        seterr(a,"API 地址无效：使用 HTTPS（本机可 HTTP），并确保地址与接口类型匹配。禁止地址携带凭据或查询参数。");
+        seterr(a,tr("API 地址无效：使用 HTTPS（本机可 HTTP），并确保地址与接口类型匹配。禁止地址携带凭据或查询参数。"));
         return -1;
     }
     return 0;
 }
 int config_valid(App *a,J *c){
     if(!config_name_valid(sget(c,"profile"))){
-        seterr(a,"配置名称不能为空，最多 40 字，不含空格或路径符号。");
+        seterr(a,tr("配置名称不能为空，最多 40 字，不含空格或路径符号。"));
         return -1;
     }
     const char *protocol=sget(c,"protocol");
     if(strcmp(protocol,"openai")&&strcmp(protocol,"anthropic")){
-        seterr(a,"接口类型应为 openai 或 anthropic。");
+        seterr(a,tr("接口类型应为 openai 或 anthropic。"));
         return -1;
     }
     if(!*sget(c,"model")||!*sget(c,"api_key")){
-        seterr(a,"请先添加模型并填写 API Key。");
+        seterr(a,tr("请先添加模型并填写 API Key。"));
         return -1;
     }
     const char *key=sget(c,"api_key");
     for(;*key;key++)if((unsigned char)*key<32||*key==127){
-        seterr(a,"密钥包含无效字符。");
+        seterr(a,tr("密钥包含无效字符。"));
         return -1;
     }
     int tokens=iget(c,"max_tokens",4096);
     if(tokens<1||tokens>65536){
-        seterr(a,"max_tokens 必须为 1–65536。");
+        seterr(a,tr("max_tokens 必须为 1–65536。"));
         return -1;
     }
     const char *version=sget(c,"anthropic_version");
     if(strlen(version)!=10||version[4]!='-'||version[7]!='-'){
-        seterr(a,"API 版本格式应为 YYYY-MM-DD。");
+        seterr(a,tr("API 版本格式应为 YYYY-MM-DD。"));
         return -1;
     }
     for(int i=0;i<10;i++)if(i!=4&&i!=7&&!isdigit((unsigned char)version[i])){
-        seterr(a,"API 版本格式无效。");
+        seterr(a,tr("API 版本格式无效。"));
         return -1;
     }
     return normalize(a,c);
@@ -151,7 +151,7 @@ static J *legacy_store(App *a){
     if(!text){
         if(errno!=ENOENT){
             json_object_put(store);
-            seterr(a,"无法读取旧配置。");
+            seterr(a,tr("无法读取旧配置。"));
             return NULL;
         }
         return store;
@@ -214,13 +214,13 @@ static J *legacy_store(App *a){
         if(!auth||!json_object_is_type(auth,json_type_object)){
             json_object_put(auth);
             json_object_put(store);
-            seterr(a,"旧密钥文件无效，未修改原文件。");
+            seterr(a,tr("旧密钥文件无效，未修改原文件。"));
             return NULL;
         }
     }
     else if(errno!=ENOENT){
         json_object_put(store);
-        seterr(a,"无法读取旧密钥文件。");
+        seterr(a,tr("无法读取旧密钥文件。"));
         return NULL;
     }
     json_object_object_foreach(profiles,name,c){
@@ -233,7 +233,7 @@ static J *legacy_store(App *a){
     }
     bad: free(text);
     json_object_put(store);
-    seterr(a,"旧 TOML 配置包含无法迁移的格式，原文件未改动。请检查配置格式。");
+    seterr(a,tr("旧 TOML 配置包含无法迁移的格式，原文件未改动。请检查配置格式。"));
     return NULL;
 }
 int store_load(App *a){
@@ -244,12 +244,12 @@ int store_load(App *a){
         base=fallback;
     }
     if(snprintf(a->config_dir,sizeof a->config_dir,"%s/desk-agent",base)>=(int)sizeof a->config_dir){
-        seterr(a,"配置目录路径过长。");
+        seterr(a,tr("配置目录路径过长。"));
         return -1;
     }
     char path[PATH_MAX];
     if(path_suffix(path,a->config_dir,"/settings.json")){
-        seterr(a,"配置目录路径过长。");
+        seterr(a,tr("配置目录路径过长。"));
         return -1;
     }
     char *text=read_bytes(path,524288,NULL);
@@ -257,13 +257,13 @@ int store_load(App *a){
         a->store=json_tokener_parse(text);
         free(text);
         if(!a->store||!json_object_is_type(get(a->store,"profiles"),json_type_object)||!json_object_is_type(get(a->store,"active_profile"),json_type_string)){
-            seterr(a,"settings.json 格式无效。");
+            seterr(a,tr("settings.json 格式无效。"));
             return -1;
         }
     }
     else{
         if(errno!=ENOENT){
-            seterr(a,"无法读取配置文件。");
+            seterr(a,tr("无法读取配置文件。"));
             return -1;
         }
         a->store=legacy_store(a);
@@ -291,7 +291,7 @@ int save_config(App *a,J *c){
     put(get(next,"profiles"),sget(c,"profile"),copy(c));
     if(mkdirs(a->config_dir,0700)){
         json_object_put(next);
-        seterr(a,"无法创建私有配置目录。");
+        seterr(a,tr("无法创建私有配置目录。"));
         return -1;
     }
     char path[PATH_MAX];
@@ -302,7 +302,7 @@ int save_config(App *a,J *c){
     const char *data=json_object_to_json_string_ext(next,JSON_C_TO_STRING_PRETTY);
     if(atomic_file(path,data,strlen(data),0600)){
         json_object_put(next);
-        seterr(a,"保存配置失败，原设置未替换。");
+        seterr(a,tr("保存配置失败，原设置未替换。"));
         return -1;
     }
     J *selected=copy(c);
@@ -317,7 +317,7 @@ int save_config(App *a,J *c){
 int activate(App *a,const char *name){
     J *entry=get(get(a->store,"profiles"),name);
     if(!entry){
-        seterr(a,"没有这个模型配置。");
+        seterr(a,tr("没有这个模型配置。"));
         return -1;
     }
     J *candidate=copy(entry);

@@ -203,7 +203,7 @@ int approve(App *a,const char *description){
     if(a->yes)return 1;
     if(!isatty(STDIN_FILENO))return 0;
     task_event(*a,'a');
-    char *v=input("允许？[y/N] ",NULL,false);
+    char *v=input(tr("允许？[y/N] "),NULL,false);
     task_event(*a,'r');
     int yes=v&&(!strcmp(v,"y")||!strcmp(v,"Y"));
     free(v);

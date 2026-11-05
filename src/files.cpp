@@ -25,19 +25,19 @@ int resolve_file(App *a,const char *path,char out[PATH_MAX]){
     char raw[PATH_MAX];
     int length=path[0]=='/'?snprintf(raw,sizeof raw,"%s",path):snprintf(raw,sizeof raw,"%s/%s",a->root,path);
     if(length>=(int)sizeof raw){
-        seterr(a,"文件路径过长。");
+        seterr(a,tr("文件路径过长。"));
         return -1;
     }
     char check[PATH_MAX];
     strcpy(check,raw);
     char *save=NULL;
     for(char *p=strtok_r(check,"/",&save);p;p=strtok_r(NULL,"/",&save))if(!strcmp(p,"..")){
-        seterr(a,"不接受含 .. 的文件路径。");
+        seterr(a,tr("不接受含 .. 的文件路径。"));
         return -1;
     }
     if(!realpath(raw,out)){
         if(errno!=ENOENT){
-            seterr(a,"无法解析文件路径。");
+            seterr(a,tr("无法解析文件路径。"));
             return -1;
         }
         char prefix[PATH_MAX],tail[PATH_MAX]="";
@@ -45,7 +45,7 @@ int resolve_file(App *a,const char *path,char out[PATH_MAX]){
         while(!realpath(prefix,out)){
             char *slash=strrchr(prefix,'/');
             if(!slash){
-                seterr(a,"文件路径无效。");
+                seterr(a,tr("文件路径无效。"));
                 return -1;
             }
             char next[PATH_MAX];
@@ -60,12 +60,12 @@ int resolve_file(App *a,const char *path,char out[PATH_MAX]){
         strcat(out,tail);
     }
     if(!inside(a->root,out)){
-        seterr(a,"文件工具只能访问工作目录。");
+        seterr(a,tr("文件工具只能访问工作目录。"));
         return -1;
     }
     char cfg[PATH_MAX];
     if(realpath(a->config_dir,cfg)&&inside(cfg,out)){
-        seterr(a,"文件工具不访问模型配置与密钥。");
+        seterr(a,tr("文件工具不访问模型配置与密钥。"));
         return -1;
     }
     const char *relative=out+strlen(a->root);
@@ -73,7 +73,7 @@ int resolve_file(App *a,const char *path,char out[PATH_MAX]){
     check[sizeof check-1]=0;
     save=NULL;
     for(char *p=strtok_r(check,"/",&save);p;p=strtok_r(NULL,"/",&save))if(!strcmp(p,".git")||!strcmp(p,".desk-agent")||!strcmp(p,".ssh")||!strcmp(p,".gnupg")||(!strncmp(p,".env",4)&&(!p[4]||p[4]=='.')&&strcmp(p,".env.example"))){
-        seterr(a,"文件工具不访问凭据、Git 内部文件或备份。");
+        seterr(a,tr("文件工具不访问凭据、Git 内部文件或备份。"));
         return -1;
     }
     return 0;
@@ -86,10 +86,10 @@ static J *file_read(App *a,const char *path){
     if(resolve_file(a,path,full))return err(a->error);
     size_t n=0;
     char *bytes=read_bytes(full,FILE_LIMIT,&n);
-    if(!bytes)return err("无法读取文件，文件可能不是普通文件或超过 64 KB。");
+    if(!bytes)return err(tr("无法读取文件，文件可能不是普通文件或超过 64 KB。"));
     if(!utf8_text(bytes,n)){
         free(bytes);
-        return err("只支持 UTF-8 文本文件。");
+        return err(tr("只支持 UTF-8 文本文件。"));
     }
     char *hash=sha256(bytes,n);
     J *result=obj();
@@ -103,7 +103,7 @@ static J *file_list(App *a,const char *path){
     char full[PATH_MAX];
     if(resolve_file(a,path,full))return err(a->error);
     DIR *directory=opendir(full);
-    if(!directory)return err("无法读取文件夹。");
+    if(!directory)return err(tr("无法读取文件夹。"));
     J *result=obj(),*entries=arr();
     struct dirent *entry;
     while((entry=readdir(directory))&&alen(entries)<200){
@@ -199,53 +199,53 @@ static void search_walk(Search *s,const char *path,int depth){
 }
 static J *file_search(App *a,J *args){
     const char *query=sget(args,"query");
-    if(!*query||strlen(query)>256||strchr(query,'\n')||strchr(query,'\r'))return err("搜索内容须为 1..256 字节的单行文本，按字面匹配。");
+    if(!*query||strlen(query)>256||strchr(query,'\n')||strchr(query,'\r'))return err(tr("搜索内容须为 1..256 字节的单行文本，按字面匹配。"));
     char full[PATH_MAX];
     if(resolve_file(a,sget(args,"path"),full))return err(a->error);
     struct stat st;
-    if(lstat(full,&st)||(!S_ISDIR(st.st_mode)&&!S_ISREG(st.st_mode)))return err("搜索路径须为存在的文件或目录。");
+    if(lstat(full,&st)||(!S_ISDIR(st.st_mode)&&!S_ISREG(st.st_mode)))return err(tr("搜索路径须为存在的文件或目录。"));
     Search s={.app=a,.query=query,.matches=arr(),.until=monotime()+3};
     search_walk(&s,full,0);
-    if(interrupted){json_object_put(s.matches);return err("搜索已取消。");}
+    if(interrupted){json_object_put(s.matches);return err(tr("搜索已取消。"));}
     J *r=obj();
     put(r,"matches",s.matches);
     put(r,"files_scanned",json_object_new_int64((int64_t)s.files));
     put(r,"skipped",json_object_new_int64((int64_t)s.skipped));
     put(r,"truncated",json_object_new_boolean(s.truncated));
-    if(s.truncated)put(r,"hint",str("达到搜索预算；缩小 path 后继续，结果并非完整列表。"));
+    if(s.truncated)put(r,"hint",str(tr("达到搜索预算；缩小 path 后继续，结果并非完整列表。")));
     return r;
 }
 static J *file_write(App *a,J *args,const char *preview){
     const char *path=sget(args,"path"),*content=sget(args,"content");
     size_t n=strlen(content);
-    if(n>FILE_LIMIT)return err("文件超过 64 KB 限制。");
+    if(n>FILE_LIMIT)return err(tr("文件超过 64 KB 限制。"));
     char full[PATH_MAX];
     if(resolve_file(a,path,full))return err(a->error);
     struct stat st;
     bool exists=lstat(full,&st)==0;
-    if(!exists&&errno!=ENOENT)return err("无法访问目标文件。");
-    if(exists&&!S_ISREG(st.st_mode))return err("目标不是普通文件。");
+    if(!exists&&errno!=ENOENT)return err(tr("无法访问目标文件。"));
+    if(exists&&!S_ISREG(st.st_mode))return err(tr("目标不是普通文件。"));
     size_t old_len=0;
     char *old=exists?read_bytes(full,FILE_LIMIT,&old_len):NULL;
-    if(exists&&!old)return err("无法读取原文件或原文件过大。");
+    if(exists&&!old)return err(tr("无法读取原文件或原文件过大。"));
     char *hash=exists?sha256(old,old_len):NULL;
     J *expected=get(args,"expected_sha256");
     bool matches=exists?(expected&&json_object_is_type(expected,json_type_string)&&hash&&!strcmp(hash,json_object_get_string(expected))):!expected;
     free(hash);
     if(!matches){
         free(old);
-        return err("文件已变化，或覆盖前未读取，请重新读取文件。");
+        return err(tr("文件已变化，或覆盖前未读取，请重新读取文件。"));
     }
     char *description=NULL;
-    if(asprintf(&description,"%s %s（%zu 字节）\n%s",preview?"修改":"写入",path,n,preview?preview:content)<0){
+    if(asprintf(&description,tr("%s %s（%zu 字节）\n%s"),preview?tr("修改"):tr("写入"),path,n,preview?preview:content)<0){
         free(old);
-        return err("无法分配写入预览内存，原文件未修改。");
+        return err(tr("无法分配写入预览内存，原文件未修改。"));
     }
     int allowed=approve(a,description);
     free(description);
     if(!allowed){
         free(old);
-        J *r=err("用户拒绝写入，不要绕过。");
+        J *r=err(tr("用户拒绝写入，不要绕过。"));
         put(r,"denied",json_object_new_boolean(1));
         return r;
     }
@@ -255,7 +255,7 @@ static J *file_write(App *a,J *args,const char *preview){
     free(latest);
     if(!unchanged){
         free(old);
-        return err("确认期间文件已变化，未写入。");
+        return err(tr("确认期间文件已变化，未写入。"));
     }
     char backup[PATH_MAX]="";
     if(exists){
@@ -263,7 +263,7 @@ static J *file_write(App *a,J *args,const char *preview){
         id_string(id);
         if(path_suffix(directory,a->root,"/.desk-agent/backups")||mkdirs(directory,0700)||snprintf(backup,sizeof backup,"%s/%s.bak",directory,id)>=(int)sizeof backup||atomic_file(backup,old,old_len,0600)){
             free(old);
-            return err("创建备份失败，未修改原文件。");
+            return err(tr("创建备份失败，未修改原文件。"));
         }
     }
     free(old);
@@ -271,11 +271,11 @@ static J *file_write(App *a,J *args,const char *preview){
     strcpy(parent,full);
     char *slash=strrchr(parent,'/');
     if(slash&&slash!=parent)*slash=0;
-    if(mkdirs(parent,0755)||atomic_file(full,content,n,exists?(st.st_mode&0777):0644))return err("写入文件失败。");
+    if(mkdirs(parent,0755)||atomic_file(full,content,n,exists?(st.st_mode&0777):0644))return err(tr("写入文件失败。"));
     latest=read_bytes(full,FILE_LIMIT,&latest_len);
     bool verified=latest&&latest_len==n&&!memcmp(latest,content,n);
     free(latest);
-    if(!verified)return err("已写入，但回读核对不一致；请重新读取当前文件，不要直接重试覆盖。");
+    if(!verified)return err(tr("已写入，但回读核对不一致；请重新读取当前文件，不要直接重试覆盖。"));
     J *result=obj();
     put(result,"written",str(path));
     hash=sha256(content,n);
@@ -287,22 +287,22 @@ static J *file_write(App *a,J *args,const char *preview){
 }
 static J *file_edit(App *a,J *args){
     const char *before=sget(args,"old_text"),*after=sget(args,"new_text");
-    if(!*before||!strcmp(before,after))return err("old_text 不能为空，且新旧文本须不同。");
+    if(!*before||!strcmp(before,after))return err(tr("old_text 不能为空，且新旧文本须不同。"));
     JsonPtr original(file_read(a,sget(args,"path")));
     J *read=original.get();
     if(get(read,"error"))return original.release();
     if(strcmp(sget(read,"sha256"),sget(args,"expected_sha256"))){
-        return err("文件已变化，或修改前未读取，请重新读取文件。");
+        return err(tr("文件已变化，或修改前未读取，请重新读取文件。"));
     }
     const char *content=sget(read,"content"),*match=strstr(content,before);
     if(!match||strstr(match+1,before)){
-        return err("old_text 必须在文件中精确匹配一次；请加入相邻上下文后重试。");
+        return err(tr("old_text 必须在文件中精确匹配一次；请加入相邻上下文后重试。"));
     }
     size_t size=strlen(content)-strlen(before)+strlen(after),offset=(size_t)(match-content);
-    if(size>FILE_LIMIT)return err("修改后的文件超过 64 KB 限制。");
+    if(size>FILE_LIMIT)return err(tr("修改后的文件超过 64 KB 限制。"));
     std::string updated(content);
     updated.replace(offset,strlen(before),after);
-    const std::string preview=std::string("替换前：\n")+before+"\n替换后：\n"+after;
+    const std::string preview=std::string(tr("替换前：\n"))+before+tr("\n替换后：\n")+after;
     JsonPtr write(copy(args));
     json_object_object_del(write.get(),"old_text");
     json_object_object_del(write.get(),"new_text");
@@ -395,7 +395,7 @@ J *tool_call(App *a,const char *name,J *args){
     }
     if(!spec||!json_object_is_type(args,json_type_object)){
         json_object_put(defs);
-        return err("未知或未启用的工具，或参数不是对象。");
+        return err(tr("未知或未启用的工具，或参数不是对象。"));
     }
     J *properties=get(spec,"properties");
     bool valid=json_object_object_length(args)==json_object_object_length(properties);
@@ -406,11 +406,11 @@ J *tool_call(App *a,const char *name,J *args){
         if(json_object_is_type(value,json_type_string)&&(size_t)json_object_get_string_len(value)!=strlen(json_object_get_string(value)))valid=false;
     }
     json_object_put(defs);
-    if(!valid)return err("工具参数缺失、多余或类型不正确。");
+    if(!valid)return err(tr("工具参数缺失、多余或类型不正确。"));
     std::unique_ptr<ResourceLock> lock;
     if(!strcmp(name,"write_file")||!strcmp(name,"edit_file")||!strcmp(name,"run_shell")){
         lock=std::make_unique<ResourceLock>(*a,false);
-        if(!lock->acquired()||interrupted)return err(interrupted?"资源等待已取消。":"工作目录被占用或无法加锁，未执行操作；请先 /switch 处理等待确认的任务，或使用 /task。");
+        if(!lock->acquired()||interrupted)return err(interrupted?tr("资源等待已取消。"):tr("工作目录被占用或无法加锁，未执行操作；请先 /switch 处理等待确认的任务，或使用 /task。"));
     }
     if(!strcmp(name,"list_files"))return file_list(a,sget(args,"path"));
     if(!strcmp(name,"read_file"))return file_read(a,sget(args,"path"));
@@ -419,7 +419,7 @@ J *tool_call(App *a,const char *name,J *args){
     if(!strcmp(name,"write_file"))return file_write(a,args,NULL);
     if(!strcmp(name,"run_shell")){
         if(!approve(a,sget(args,"command"))){
-            J *r=err("用户拒绝执行，不要绕过。");
+            J *r=err(tr("用户拒绝执行，不要绕过。"));
             put(r,"denied",json_object_new_boolean(1));
             return r;
         }
@@ -427,7 +427,7 @@ J *tool_call(App *a,const char *name,J *args){
     }
     if(!strcmp(name,"desktop_snapshot"))return desktop_snapshot(a,sget(args,"app"));
     if(!approve(a,json_object_to_json_string_ext(args,JSON_C_TO_STRING_PLAIN))){
-        J *r=err("用户拒绝桌面操作，不要绕过。");
+        J *r=err(tr("用户拒绝桌面操作，不要绕过。"));
         put(r,"denied",json_object_new_boolean(1));
         return r;
     }

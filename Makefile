@@ -8,7 +8,7 @@ LDLIBS += $(shell pkg-config --libs $(PKGS) $(ATSPI))
 ifneq ($(ATSPI),)
 CPPFLAGS += -DWITH_ATSPI
 endif
-CORE = src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp
+CORE = src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
 .PHONY: all clean test sanitize install
 all: build/desk
 build:

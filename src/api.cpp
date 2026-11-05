@@ -32,7 +32,7 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
     if(config_valid(a,c))return NULL;
     char url[8192];
     if(snprintf(url,sizeof url,"%s%s",sget(c,"base_url"),endpoint)>=(int)sizeof url){
-        seterr(a,"API 地址过长。");
+        seterr(a,tr("API 地址过长。"));
         return NULL;
     }
     bool native=!strcmp(sget(c,"protocol"),"anthropic");
@@ -40,7 +40,7 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
     for(int attempt=0;attempt<3;attempt++){
         CURL *h=curl_easy_init();
         if(!h){
-            seterr(a,"无法初始化 HTTP。");
+            seterr(a,tr("无法初始化 HTTP。"));
             return NULL;
         }
         Buffer b;
@@ -51,7 +51,7 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         if(asprintf(&auth,native?"x-api-key: %s":"Authorization: Bearer %s",sget(c,"api_key"))<0){
             curl_slist_free_all(headers);
             curl_easy_cleanup(h);
-            seterr(a,"无法分配请求头内存。");
+            seterr(a,tr("无法分配请求头内存。"));
             return NULL;
         }
         headers=curl_slist_append(headers,auth);
@@ -81,37 +81,37 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         curl_slist_free_all(headers);
         curl_easy_cleanup(h);
         if(rc!=CURLE_OK){
-            seterr(a,interrupted?"请求已取消。":b.oversized?"API 响应超过大小限制。":"API 连接失败或超时；未自动重发请求。");
+            seterr(a,interrupted?tr("请求已取消。"):b.oversized?tr("API 响应超过大小限制。"):tr("API 连接失败或超时；未自动重发请求。"));
             return NULL;
         }
         if(status>=200&&status<300){
             if(!valid_utf8(b.data)){
-                seterr(a,"API 返回的文本不是有效 UTF-8。");
+                seterr(a,tr("API 返回的文本不是有效 UTF-8。"));
                 return nullptr;
             }
             J *data=b.data.empty()?nullptr:json_tokener_parse(b.data.c_str());
             if(!data||!json_object_is_type(data,json_type_object)){
                 json_object_put(data);
-                seterr(a,"API 未返回有效 JSON 对象，请检查接口地址。");
+                seterr(a,tr("API 未返回有效 JSON 对象，请检查接口地址。"));
                 return NULL;
             }
             return data;
         }
         bool retry=status==429||status==500||status==502||status==503||status==504||status==529;
         if(retry&&attempt<2&&!interrupted){
-            fprintf(stderr,"API HTTP %ld，正在重试（%d/2）…\n",status,attempt+1);
+            fprintf(stderr,tr("API HTTP %ld，正在重试（%d/2）…\n"),status,attempt+1);
             struct timespec t={
                 1<<attempt,0
             };
             while(nanosleep(&t,&t)&&!interrupted){
             }
             if(interrupted){
-                seterr(a,"请求已取消。");
+                seterr(a,tr("请求已取消。"));
                 return NULL;
             }
             continue;
         }
-        const char *help=status==401?"密钥无效或已过期。":status==403?"没有模型或接口权限。":status==404?"地址或模型不存在。":status==429?"限流或额度不足。":status==400?"接口类型或参数不兼容。":"服务商请求失败。";
+        const char *help=status==401?tr("密钥无效或已过期。"):status==403?tr("没有模型或接口权限。"):status==404?tr("地址或模型不存在。"):status==429?tr("限流或额度不足。"):status==400?tr("接口类型或参数不兼容。"):tr("服务商请求失败。");
         snprintf(a->error,sizeof a->error,"API HTTP %ld：%s",status,help);
         return NULL;
     }
@@ -205,16 +205,16 @@ J *native_payload(J *c,J *messages,J *tools){
 J *native_response(App *a,J *data){
     const char *stop=sget(data,"stop_reason");
     if(!strcmp(stop,"max_tokens")||!strcmp(stop,"model_context_window_exceeded")){
-        seterr(a,"模型响应被截断，本轮工具未执行。");
+        seterr(a,tr("模型响应被截断，本轮工具未执行。"));
         return NULL;
     }
     if(strcmp(stop,"end_turn")&&strcmp(stop,"tool_use")&&strcmp(stop,"stop_sequence")){
-        seterr(a,"模型拒绝或尚未结束响应，本轮工具未执行。");
+        seterr(a,tr("模型拒绝或尚未结束响应，本轮工具未执行。"));
         return NULL;
     }
     J *blocks=get(data,"content");
     if(!json_object_is_type(blocks,json_type_array)){
-        seterr(a,"Anthropic 响应缺少 content 数组。");
+        seterr(a,tr("Anthropic 响应缺少 content 数组。"));
         return NULL;
     }
     JsonPtr result(obj()),calls(arr());
@@ -249,7 +249,7 @@ J *native_response(App *a,J *data){
     if(alen(calls.get()))put(result.get(),"tool_calls",calls.release());
     return result.release();
     bad:
-    seterr(a,"Anthropic 工具或内容块格式无效，本轮工具未执行。");
+    seterr(a,tr("Anthropic 工具或内容块格式无效，本轮工具未执行。"));
     return NULL;
 }
 J *api_complete(App *a,J *c,J *messages,J *tools){
@@ -272,17 +272,17 @@ J *api_complete(App *a,J *c,J *messages,J *tools){
     if(native)result=native_response(a,data);
     else{
         J *choice=at(get(data,"choices"),0);
-        if(!strcmp(sget(choice,"finish_reason"),"length"))seterr(a,"模型响应被截断，本轮工具未执行。");
-        else if(get(get(choice,"message"),"refusal"))seterr(a,"模型拒绝处理本次请求。");
+        if(!strcmp(sget(choice,"finish_reason"),"length"))seterr(a,tr("模型响应被截断，本轮工具未执行。"));
+        else if(get(get(choice,"message"),"refusal"))seterr(a,tr("模型拒绝处理本次请求。"));
         else if(json_object_is_type(get(choice,"message"),json_type_object)){
             result=copy(get(choice,"message"));
             if(get(result,"role")&&strcmp(sget(result,"role"),"assistant")){
                 json_object_put(result);
                 result=NULL;
-                seterr(a,"模型响应的消息角色无效。");
+                seterr(a,tr("模型响应的消息角色无效。"));
             }else if(result)put(result,"role",str("assistant"));
         }
-        else seterr(a,"Chat Completions 响应格式无效。");
+        else seterr(a,tr("Chat Completions 响应格式无效。"));
     }
     json_object_put(data);
     return result;
@@ -292,7 +292,7 @@ J *api_models(App *a,J *c){
     if(!data)return NULL;
     J *entries=get(data,"data"),*out=arr();
     if(!json_object_is_type(entries,json_type_array)){
-        seterr(a,"服务商不支持模型列表；可手动填写模型名称。");
+        seterr(a,tr("服务商不支持模型列表；可手动填写模型名称。"));
         json_object_put(out);
         out=NULL;
     }
@@ -331,6 +331,6 @@ int api_check(App *a,J *c){
         json_object_put(args);
     }
     json_object_put(reply);
-    if(ok)seterr(a,"接口响应成功，但未验证工具调用能力；原配置未改动。");
+    if(ok)seterr(a,tr("接口响应成功，但未验证工具调用能力；原配置未改动。"));
     return ok;
 }

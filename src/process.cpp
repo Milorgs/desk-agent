@@ -22,7 +22,7 @@ static bool private_variable(const char *entry){
     return secret;
 }
 J *run_command(App *a,const char *command,int timeout_ms){
-    if(timeout_ms<1||timeout_ms>300000)return err("命令超时设置无效。");
+    if(timeout_ms<1||timeout_ms>300000)return err(tr("命令超时设置无效。"));
     int count=0;
     while(environ[count])count++;
     std::vector<char *> env;
@@ -34,14 +34,14 @@ J *run_command(App *a,const char *command,int timeout_ms){
     if(!output||nullfd<0){
         if(output)fclose(output);
         if(nullfd>=0)close(nullfd);
-        return err("无法创建命令输出文件。");
+        return err(tr("无法创建命令输出文件。"));
     }
     double start=monotime();
     pid_t child=fork();
     if(child<0){
         fclose(output);
         close(nullfd);
-        return err("无法启动命令。");
+        return err(tr("无法启动命令。"));
     }
     if(child==0){
         signal(SIGINT,SIG_DFL);
@@ -63,7 +63,7 @@ J *run_command(App *a,const char *command,int timeout_ms){
         while(waitpid(child,NULL,0)<0&&errno==EINTR){
         }
         fclose(output);
-        return err("无法建立命令进程组。");
+        return err(tr("无法建立命令进程组。"));
     }
     int status=0;
     bool reaped=false,timed=false,failed=false;
@@ -97,18 +97,18 @@ J *run_command(App *a,const char *command,int timeout_ms){
     }
     if(interrupted){
         fclose(output);
-        return err("命令已取消。");
+        return err(tr("命令已取消。"));
     }
     if(failed){
         fclose(output);
-        return err("命令等待失败，未自动重新执行。");
+        return err(tr("命令等待失败，未自动重新执行。"));
     }
     rewind(output);
     char data[16001];
     size_t len=fread(data,1,sizeof data,output);
     bool io_error=ferror(output);
     fclose(output);
-    if(io_error)return err("读取命令输出失败。");
+    if(io_error)return err(tr("读取命令输出失败。"));
     bool truncated=len>16000;
     if(truncated)len=16000;
     std::string safe;

@@ -84,17 +84,17 @@ static void visit(Desktop *d,AtspiAccessible *node,int depth,J *nodes){
 }
 J *desktop_snapshot(App *a,const char *app){
     Desktop *d=desktop(a);
-    if(!d)return err("内存不足。");
+    if(!d)return err(tr("内存不足。"));
     desktop_clear(a);
     if(!d->ready){
-        if(atspi_init()!=0)return err("AT-SPI 无法初始化，请确认正在图形会话中运行。");
+        if(atspi_init()!=0)return err(tr("AT-SPI 无法初始化，请确认正在图形会话中运行。"));
         atspi_set_timeout(1500,3000);
         d->ready=true;
     }
     id_string(d->stamp);
     d->created=monotime();
     AtspiAccessible *root=atspi_get_desktop(0);
-    if(!root)return err("无法读取桌面无障碍服务。");
+    if(!root)return err(tr("无法读取桌面无障碍服务。"));
     J *r=obj(),*apps=arr(),*nodes=arr();
     put(r,"apps",apps);
     put(r,"nodes",nodes);
@@ -111,15 +111,15 @@ J *desktop_snapshot(App *a,const char *app){
     }
     g_object_unref(root);
     put(r,"partial",json_object_new_boolean(d->count>=180||monotime()-d->created>=8));
-    put(r,"hint",str("按完整应用名读取控件。每次操作后重新 snapshot 验证。"));
+    put(r,"hint",str(tr("按完整应用名读取控件。每次操作后重新 snapshot 验证。")));
     return r;
 }
 J *desktop_act(App *a,const char *ref,const char *action,const char *text){
     Desktop *d=desktop(a);
-    if(!d||monotime()-d->created>30||strncmp(ref,d->stamp,32)||ref[32]!=':')return err("控件引用无效或过期，请重新读取桌面。");
+    if(!d||monotime()-d->created>30||strncmp(ref,d->stamp,32)||ref[32]!=':')return err(tr("控件引用无效或过期，请重新读取桌面。"));
     char *end=NULL;
     long number=strtol(ref+33,&end,10);
-    if(!end||*end||number<1||number>d->count)return err("控件引用无效。");
+    if(!end||*end||number<1||number>d->count)return err(tr("控件引用无效。"));
     int i=(int)number-1;
     AtspiAccessible *node=g_object_ref(d->nodes[i]);
     char *name=atspi_accessible_get_name(node,NULL);
@@ -128,7 +128,7 @@ J *desktop_act(App *a,const char *ref,const char *action,const char *text){
     desktop_clear(a);
     if(!same){
         g_object_unref(node);
-        return err("控件已变化。");
+        return err(tr("控件已变化。"));
     }
     AtspiStateSet *states=atspi_accessible_get_state_set(node);
     bool enabled=states&&atspi_state_set_contains(states,ATSPI_STATE_ENABLED);
@@ -159,7 +159,7 @@ J *desktop_act(App *a,const char *ref,const char *action,const char *text){
     J *r=obj();
     put(r,"accepted",json_object_new_boolean(ok));
     put(r,"verified",json_object_new_boolean(0));
-    put(r,"next",str("重新读取桌面验证结果。"));
+    put(r,"next",str(tr("重新读取桌面验证结果。")));
     return r;
 }
 bool desktop_compiled(void){
@@ -175,13 +175,13 @@ bool desktop_compiled(void){
 J *desktop_snapshot(App *a,const char *name){
     (void)a;
     (void)name;
-    return err("本次构建未启用 AT-SPI，请安装开发库后重新编译。");
+    return err(tr("本次构建未启用 AT-SPI，请安装开发库后重新编译。"));
 }
 J *desktop_act(App *a,const char *r,const char *action,const char *text){
     (void)a;
     (void)r;
     (void)action;
     (void)text;
-    return err("本次构建未启用 AT-SPI。");
+    return err(tr("本次构建未启用 AT-SPI。"));
 }
 #endif

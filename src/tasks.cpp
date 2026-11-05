@@ -63,8 +63,8 @@ ResourceLock::ResourceLock(App &app,bool desktop){
         }
         if(errno!=EWOULDBLOCK&&errno!=EAGAIN)break;
         // Do not block the control terminal behind a task awaiting approval.
-        if(app.task_events<0){puts("资源正被任务占用，请先 /switch 确认，或使用 /task 后台执行。");break;}
-        if(!waiting){puts(desktop?"等待其他任务释放桌面…":"等待同一工作目录的其他操作结束…");fflush(stdout);task_event(app,'q');waiting=true;}
+        if(app.task_events<0){puts(tr("资源正被任务占用，请先 /switch 确认，或使用 /task 后台执行。"));break;}
+        if(!waiting){puts(desktop?tr("等待其他任务释放桌面…"):tr("等待同一工作目录的其他操作结束…"));fflush(stdout);task_event(app,'q');waiting=true;}
         usleep(50000);
     }
     close(candidate);
@@ -113,23 +113,23 @@ void Tasks::refresh(){
 int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     refresh();
     if(task.empty()||task.size()>65536||impl->jobs.size()>=32||std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const Job &j){return j.active;})>=4){
-        seterr(&app,"任务为空、过长或达到上限（同时 4 个，本次会话共 32 个）。");return -1;
+        seterr(&app,tr("任务为空、过长或达到上限（同时 4 个，本次会话共 32 个）。"));return -1;
     }
     if(config_valid(&app,app.config))return -1;
     char root[PATH_MAX];
     struct stat directory{};
-    if(!realpath(workspace.empty()?app.root:workspace.c_str(),root)||stat(root,&directory)||!S_ISDIR(directory.st_mode)){seterr(&app,"工作目录不存在。");return -1;}
+    if(!realpath(workspace.empty()?app.root:workspace.c_str(),root)||stat(root,&directory)||!S_ISDIR(directory.st_mode)){seterr(&app,tr("工作目录不存在。"));return -1;}
     int payload[2],events[2];
-    if(pipe2(payload,O_CLOEXEC)){seterr(&app,"无法创建任务管道。");return -1;}
-    if(pipe2(events,O_CLOEXEC|O_NONBLOCK)){close(payload[0]);close(payload[1]);seterr(&app,"无法创建状态管道。");return -1;}
+    if(pipe2(payload,O_CLOEXEC)){seterr(&app,tr("无法创建任务管道。"));return -1;}
+    if(pipe2(events,O_CLOEXEC|O_NONBLOCK)){close(payload[0]);close(payload[1]);seterr(&app,tr("无法创建状态管道。"));return -1;}
     JsonPtr data(obj());
-    put(data.get(),"config",copy(app.config));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));
+    put(data.get(),"language",str(language_code()));put(data.get(),"config",copy(app.config));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));
     put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));
     put(data.get(),"shell",json_object_new_boolean(app.shell));put(data.get(),"desktop",json_object_new_boolean(app.desktop));
     put(data.get(),"record",json_object_new_boolean(app.record));put(data.get(),"max_steps",json_object_new_int(app.max_steps));
     put(data.get(),"events",json_object_new_int(events[1]));
     std::string body=json_object_to_json_string_ext(data.get(),JSON_C_TO_STRING_PLAIN);
-    if(body.size()>250000){close(payload[0]);close(payload[1]);close(events[0]);close(events[1]);seterr(&app,"任务配置过大。");return -1;}
+    if(body.size()>250000){close(payload[0]);close(payload[1]);close(events[0]);close(events[1]);seterr(&app,tr("任务配置过大。"));return -1;}
     // Flush inherited stdio; a worker execs a fresh process, including AT-SPI.
     fflush(nullptr);
     int master=-1;
@@ -143,28 +143,28 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
         execl(impl->executable.c_str(),"desk","--task-worker",number,static_cast<char *>(nullptr));_exit(127);
     }
     close(payload[0]);close(events[1]);
-    if(pid<0){close(payload[1]);close(events[0]);seterr(&app,"无法启动任务。");return -1;}
+    if(pid<0){close(payload[1]);close(events[0]);seterr(&app,tr("无法启动任务。"));return -1;}
     fcntl(master,F_SETFD,FD_CLOEXEC);nonblocking(master);
     body+='\n';
     bool sent=write_all(payload[1],body);
-    if(!sent){close(payload[1]);kill(pid,SIGTERM);while(waitpid(pid,nullptr,0)<0&&errno==EINTR){}close(master);close(events[0]);seterr(&app,"无法传递任务配置。");return -1;}
+    if(!sent){close(payload[1]);kill(pid,SIGTERM);while(waitpid(pid,nullptr,0)<0&&errno==EINTR){}close(master);close(events[0]);seterr(&app,tr("无法传递任务配置。"));return -1;}
     Job j;j.id=impl->next++;j.pid=pid;j.master=master;j.events=events[0];j.feed=payload[1];j.title=task;j.workspace=root;
     int id=j.id;impl->jobs.push_back(std::move(j));return id;
 }
 J *Tasks::snapshot(){
     refresh();J *items=arr();
-    for(const auto &j:impl->jobs){J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(j.state.c_str()));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));add(items,v);}return items;
+    for(const auto &j:impl->jobs){J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));add(items,v);}return items;
 }
 void Tasks::list(){
-    refresh();if(impl->jobs.empty())puts("尚无并行任务，使用 /task 任务描述 新建。");
-    for(const auto &j:impl->jobs)printf("[%d] %s · %.120s\n    %s\n",j.id,j.state.c_str(),j.title.c_str(),j.workspace.c_str());
+    refresh();if(impl->jobs.empty())puts(tr("尚无并行任务，使用 /task 任务描述 新建。"));
+    for(const auto &j:impl->jobs)printf("[%d] %s · %.120s\n    %s\n",j.id,tr(j.state.c_str()),j.title.c_str(),j.workspace.c_str());
 }
 bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
 bool Tasks::resume(int id,const std::string &task){
     refresh();Job *j=impl->find(id);
     if(!j||j->active||!j->alive||task.empty()||task.size()>65536)return false;
     if(std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const Job &job){return job.active;})>=4)return false;
-    JsonPtr message(obj());put(message.get(),"task",str(task.c_str()));
+    JsonPtr message(obj());put(message.get(),"language",str(language_code()));put(message.get(),"task",str(task.c_str()));
     std::string text=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);text+='\n';
     if(!write_all(j->feed,text))return false;
     j->active=true;j->cancelled=false;j->state="执行中";j->title=task;
@@ -184,9 +184,9 @@ char *Tasks::readline(){
     }
 }
 void Tasks::attach(int id){
-    refresh();Job *j=impl->find(id);if(!j){puts("任务编号不存在。");return;}
-    printf("\n任务 [%d]：%s\nCtrl+] 返回任务列表；Ctrl+C 停止此任务。\n",id,j->title.c_str());
-    if(j->truncated)puts("…仅保留最近 64 KB 输出。");
+    refresh();Job *j=impl->find(id);if(!j){puts(tr("任务编号不存在。"));return;}
+    printf(tr("\n任务 [%d]：%s\nCtrl+] 返回任务列表；Ctrl+C 停止此任务。\n"),id,j->title.c_str());
+    if(j->truncated)puts(tr("…仅保留最近 64 KB 输出。"));
     fwrite(j->output.data(),1,j->output.size(),stdout);fflush(stdout);
     if(!j->active)return;
     termios old{},raw{};bool changed=!tcgetattr(STDIN_FILENO,&old);
@@ -215,7 +215,7 @@ void Tasks::attach(int id){
         }
     }
     if(changed)tcsetattr(STDIN_FILENO,TCSANOW,&old);
-    printf("\n任务 [%d]：%s\n",id,j->state.c_str());
+    printf(tr("\n任务 [%d]：%s\n"),id,tr(j->state.c_str()));
 }
 int task_worker(int fd){
     FILE *control=fdopen(fd,"r");if(!control)return 1;
@@ -227,6 +227,7 @@ int task_worker(int fd){
         return JsonPtr(json_tokener_parse(source.line));
     };
     JsonPtr data=read_message();if(!data)return 1;
+    set_language(sget(data.get(),"language"));
     App app;
     app.config=copy(get(data.get(),"config"));
     snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));
@@ -247,6 +248,7 @@ int task_worker(int fd){
         if(interrupted==SIGTERM)break;
         interrupted=0;
         JsonPtr next=read_message();if(!next||interrupted)break;
+        set_language(sget(next.get(),"language"));
         task=sget(next.get(),"task");if(task.empty())break;
     }
     return 0;
