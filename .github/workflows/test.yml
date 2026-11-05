@@ -63,6 +63,10 @@ jobs:
           New-Item -ItemType Directory -Force dist/desk-agent-windows-x64 | Out-Null
           Copy-Item build/windows/Release/desk.exe dist/desk-agent-windows-x64/
           Copy-Item windows/install.ps1,windows/README.txt dist/desk-agent-windows-x64/
+          New-Item -ItemType Directory -Force dist/desk-agent-windows-x64/licenses | Out-Null
+          foreach ($dependency in @('curl','json-c','openssl','zlib')) {
+            Copy-Item "build/windows/vcpkg_installed/x64-windows-static/share/$dependency/copyright" "dist/desk-agent-windows-x64/licenses/$dependency.txt"
+          }
           Compress-Archive -Path dist/desk-agent-windows-x64/* -DestinationPath dist/desk-agent-windows-x64.zip
           $digest = (Get-FileHash dist/desk-agent-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
           "$digest  desk-agent-windows-x64.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ASCII
@@ -77,6 +81,11 @@ jobs:
           path: |
             dist/desk-agent-windows-x64.zip
             dist/SHA256SUMS.txt
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: windows-x64-static-${{ hashFiles('vcpkg.json') }}
   release-windows:
     needs: [test, windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

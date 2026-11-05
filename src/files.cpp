@@ -300,7 +300,12 @@ static void definition(J *tools,const char *name,const char *description,const c
             !strcmp(fields[i],"new_text")?"Replacement text; empty string deletes the matched text.":
             !strcmp(fields[i],"query")?"Case-sensitive literal single-line search text, not a regular expression (1..256 bytes).":
             !strcmp(fields[i],"content")?"Complete UTF-8 file contents (up to 64 KB).":
-            !strcmp(fields[i],"command")?"One noninteractive bash command. Runs independently in the workspace; cd and exported variables do not persist.":
+            !strcmp(fields[i],"command")?
+#ifdef _WIN32
+            "One noninteractive Windows PowerShell command. Runs independently in the workspace; variables and directory changes do not persist.":
+#else
+            "One noninteractive bash command. Runs independently in the workspace; cd and exported variables do not persist.":
+#endif
             !strcmp(fields[i],"app")?"Empty string lists applications; otherwise use an exact application name from the latest snapshot.":
             !strcmp(fields[i],"ref")?"Fresh control reference from the latest snapshot; invalid after any desktop action.":
             !strcmp(fields[i],"action")?"Exact action name advertised by the referenced control.":"Complete replacement text for the editable control.";

@@ -68,6 +68,7 @@ char *input(const char *prompt,const char *fallback,bool secret){
             text.append(buffer,count);if(text.size()>65536){ok=false;break;}if(text.find(L'\n')!=std::wstring::npos)break;
         }
         if(secret){SetConsoleMode(handle,mode);putchar('\n');}
+        if(!text.empty()&&text.front()==26)ok=false;
         if(ok&&!interrupted)line=utf8(text);
     }else{
         bool pipe=GetFileType(handle)==FILE_TYPE_PIPE;

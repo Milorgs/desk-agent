@@ -7,6 +7,7 @@
 #include <thread>
 #include <mutex>
 #include <algorithm>
+#include <stdexcept>
 struct WinHandle {
     HANDLE value=nullptr;
     WinHandle()=default;

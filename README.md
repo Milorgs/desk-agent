@@ -1,10 +1,24 @@
 # desk-agent
 
-Linux AI 电脑助手。在终端输入 `desk`，用自然语言搜索和修改文件、执行命令，或通过桌面控件操作应用。支持保存多套模型配置，切换 OpenAI接口和 Anthropic接口。
+Linux / Windows AI 电脑助手。在终端输入 `desk`，用自然语言搜索和修改文件、执行命令，或通过桌面控件操作应用。支持保存多套模型配置，切换 OpenAI接口和 Anthropic接口。
 
-当前版本 **1.4.0**。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 集成测试使用本地模拟服务，真实模型和真实桌面操作仍需用户环境联调。
+当前版本 **1.5.0**。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 集成测试使用本地模拟服务，真实模型和真实桌面操作仍需用户环境联调。
 
-## 安装
+## Windows 安装
+
+从 [Releases](https://github.com/Milorgs/desk-agent/releases) 下载 `desk-agent-windows-x64.zip`，解压后运行 `desk.exe`。首次在主菜单选择 `[3] 添加模型`，填写自己的接口地址、模型和密钥。包内不包含开发者的模型配置或密钥。
+
+如需在任意终端输入 `desk`，在解压目录打开 PowerShell：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+安装到当前用户的 `%LOCALAPPDATA%\Programs\desk-agent`，无需管理员权限。安装后重新打开终端；卸载时删除该安装目录，并从用户 PATH 删除对应条目。模型配置独立保留，需要时自行删除。
+
+Windows 使用 PowerShell 执行命令；桌面使用 UI Automation，适合提供标准控件的应用。工作目录、中文路径、数字菜单、中英文界面、OpenAI / Anthropic 接口和并行任务共用同一套交互。真实模型与桌面应用仍需在用户电脑联调。
+
+## Linux 安装
 
 需要支持 C++20 的编译器、Make、pkg-config、libcurl、json-c 和 OpenSSL 开发库。AT-SPI 开发库可选：检测到时编译桌面功能，否则文件、API 和终端功能仍可使用。
 
@@ -81,7 +95,7 @@ desk --lang zh
 
 “设置”中按数字选择界面语言、桌面工具、操作确认、编辑当前模型配置、切换模型 ID，以及连接测试。模型 ID 可以从在线列表按编号选择，也可以手动填写。连接测试会产生少量 API 用量。
 
-前台操作确认使用 `[1] 允许 / [2] 拒绝 / [0] 取消`。菜单返回统一使用 `[0]`；不需要输入斜杠命令或 y/n。内容、路径、模型名称及密钥仍正常输入。Ctrl+C 仍可停止当前前台任务，Ctrl+D 或主菜单 `[0]` 退出。
+前台操作确认使用 `[1] 允许 / [2] 拒绝 / [0] 取消`。菜单返回统一使用 `[0]`；不需要输入斜杠命令或 y/n。内容、路径、模型名称及密钥仍正常输入。Ctrl+C 仍可停止当前前台任务，Linux 可用 Ctrl+D，Windows 控制台可用 Ctrl+Z 后回车，或主菜单 `[0]` 退出。
 
 任务状态区分等待、执行中、取消、失败和本轮结束；本轮结束只表示模型结束回答，业务结果仍需核对。
 
@@ -134,7 +148,7 @@ desk --record
 
 ## 配置与迁移
 
-新版配置是 `$XDG_CONFIG_HOME/desk-agent/settings.json`，默认 `~/.config/desk-agent/settings.json`，权限 600，包含每套模型的密钥。
+新版配置在 Linux 默认位于 `~/.config/desk-agent/settings.json`，权限 600；Windows 默认位于 `%LOCALAPPDATA%\desk-agent\settings.json`，文件访问权限限制为当前用户和 SYSTEM。支持 `XDG_CONFIG_HOME` 覆盖。配置包含每套模型的密钥，只保存在实际运行程序的用户电脑；语言偏好单独保存在同目录 `ui.json`。
 
 没有新配置时，读取旧版生成的 `config.toml` 和 `auth.json`；成功保存或选择配置后写入新文件，旧文件保持原样。迁移器支持旧程序生成的双引号字符串、整数和 profiles 格式，不是完整 TOML 解析器；遇到无法迁移的格式会明确报错。
 
@@ -147,8 +161,8 @@ Anthropic 配置支持 `max_tokens`（默认 4096）和 `anthropic_version`（�
 - 文件工具：搜索文本并返回路径和行号，读取文件，精确替换一处文本或写入整个文件。支持工作目录内的 64 KB UTF-8 文本，修改前验证 SHA256 并备份到 `.desk-agent/backups/`，写入后回读核对字节；拒绝外部路径、外链及凭据、Git 内部目录。
 - 搜索预算：最多 50 条匹配行、1000 个文件、10000 个目录项、16 层、8 MB 文本、3 秒；跳过依赖/构建目录、遍历中的符号链接、过大和非文本文件。会返回截断与跳过信息；没有匹配不能证明整个项目不存在目标文本，可缩小目录继续查找。
 - 执行反馈：显示文件路径、命令、搜索数量、退出码、命令输出预览和耗时。相同读取调用三次获得相同结果会停止；成功修改后允许重新读取。命令或修改失败不会被无关读取清除，三次尚未恢复的失败会停止。相同类别、相同目标的成功重试才算恢复；这仍不能代替对用户目标的验证。
-- 命令工具：当前用户权限，**不是操作系统沙箱**；30 秒超时，最多显示 16 KB 输出，子进程单文件上限 2 MB。结束或取消时清理同组后台进程，不支持持久服务或主动脱离进程组的程序。
-- 桌面工具：AT-SPI 读取控件、调用公布的动作、替换编辑区内容。引用 30 秒失效，一次操作后全部失效，跳过密码控件。不支持全局坐标点击、任意快捷键和截图识别。
+- 命令工具：当前用户权限，**不是操作系统沙箱**；默认 30 秒超时，最多显示 16 KB 输出。Linux 使用 Bash 和进程组，子进程单文件上限 2 MB；Windows 使用 PowerShell 和 Job Object，结束或取消时清理所属进程。命令不适合启动需要持续保留的服务。
+- 桌面工具：Linux 使用 AT-SPI；Windows 使用 UI Automation，支持 Invoke、Toggle、Select 和 Value 模式。读取控件、调用公布的动作、替换编辑区内容。引用 30 秒失效，一次操作后全部失效，跳过密码控件。不支持全局坐标点击、任意快捷键和截图识别。Windows 不能操作权限更高的应用、UAC 安全桌面，或未提供控件接口的界面。
 - API：OpenAI Chat Completions 与 Anthropic 原生 Messages；保留 Anthropic 工具续接所需的签名内容块。暂不支持 Responses、OAuth、云平台 IAM、自定义 headers、流式及服务端工具。
 - 上下文：按完整任务保留最近 6 轮历史和当前任务，序列化预算 128 KB；不会拆开工具调用与结果。预算不是 token 计数，当前任务本身过大时停止。
 - 记录：默认不保存对话；`--record` 将完整会话保存到本机私有状态目录，分享前检查其中的任务、文件与桌面内容。
@@ -171,13 +185,33 @@ src/main.cpp     菜单、配置向导、对话与参数
 src/config.cpp   原子 JSON 配置及旧配置迁移
 src/api.cpp      libcurl 传输与双接口适配
 src/i18n.cpp     界面翻译与独立语言偏好
-src/tasks.cpp    进程任务管理、终端切换与资源协调
+src/tasks.cpp    Linux 进程任务管理、终端与资源协调
+src/tasks_ui.cpp 共用数字任务菜单
 src/tasks.hpp    任务管理接口
 src/agent.cpp    任务循环、上下文、记录和状态
 src/files.cpp    工具定义、参数校验、文件与 SHA256
 src/process.cpp  原生命令执行与进程组清理
 src/desktop.cpp  可选 AT-SPI 桌面适配
-src/util.cpp     JSON、文件、输入与路径辅助
+src/util.cpp     Linux 文件、输入辅助
+src/common.cpp   JSON、确认、清理等共用辅助
+src/platform.*   UTF-8 路径、目录和环境适配
+src/windows/     Windows 文件、进程、任务及 UI Automation
 src/desk.hpp     模块接口
-tests/test.cpp   自动化测试及 HTTP 模拟服务
+tests/test.cpp   Linux 自动化测试及 HTTP 模拟服务
+tests/windows.cpp Windows 原生集成测试
+windows/        安装脚本、清单和发行包说明
+CMakeLists.txt  跨平台 CMake 构建，Windows 依赖使用 vcpkg
 ```
+
+## Windows 源码构建
+
+需要 Visual Studio 2022 的 C++ 桌面开发组件、Windows SDK、CMake 和 vcpkg。使用与 `vcpkg.json` 对应的版本：
+
+```powershell
+cmake -S . -B build/windows -A x64 "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DBUILD_TESTING=ON
+cmake --build build/windows --config Release --parallel 2
+ctest --test-dir build/windows -C Release --output-on-failure
+.\build\windows\Release\desk.exe
+```
+
+Windows CI 检查 UTF-8 文件、私有 ACL、PowerShell 输出与超时、子进程清理、模拟双接口、任务并行、确认、继续和单任务取消，然后生成 ZIP。桌面适配参与编译，但测试不会操作真实桌面。发布包使用静态依赖，不要求用户安装编译环境。

@@ -870,9 +870,9 @@ static void test_english_menu(void){
     App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     std::string output;CHECK(terminal_until(master,output,"[1] Start chat"));
-    CHECK(output.find("[2] Select model")!=std::string::npos);CHECK(output.find("[3] Add model")!=std::string::npos);
+    CHECK(terminal_until(master,output,"[3] Add model"));CHECK(output.find("[2] Select model")!=std::string::npos);
     CHECK(write(master,"3\n",2)==2);CHECK(terminal_until(master,output,"[1] OpenAI API"));
-    CHECK(output.find("[2] Anthropic API")!=std::string::npos);
+    CHECK(terminal_until(master,output,"[2] Anthropic API"));
     const char *quit="0\n5\n1\n1\n0\n0\n";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
     CHECK(terminal_until(master,output,"[1] 开始对话"));
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
