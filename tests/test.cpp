@@ -907,9 +907,10 @@ static void test_numeric_settings(void){
     App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     const char *keys="5\n2\n1\n3\n2\n0\n6\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
-    std::string output;CHECK(terminal_until(master,output,"Desktop: On  Permissions: Approve file edits"));
+    std::string output;CHECK(terminal_until(master,output,"Approval: Approve file edits"));
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     CHECK(output.find("/desktop")==std::string::npos&&output.find("/permissions")==std::string::npos);
+    CHECK(output.find("\n  Task:")==std::string::npos&&output.find("\n  Desktop:")==std::string::npos);
     char path[PATH_MAX];CHECK(!path_suffix(path,a.config_dir,"/settings.json"));CHECK(access(path,F_OK)!=0);
     app_cleanup(&a);
 }

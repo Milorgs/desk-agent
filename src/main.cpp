@@ -15,7 +15,7 @@ static void on_signal(int number){
 }
 #endif
 static void status(App *a){
-    printf(tr("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n"),VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,tr(a->state?a->state:"等待任务"),a->desktop?tr("开启"):tr("关闭"),permission_name(*a));
+    printf(tr("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
     printf(tr("  推理模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")));
 }
 static char *field(const char *name,const char *fallback,bool secret){
