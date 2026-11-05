@@ -30,6 +30,7 @@ struct Job {
     pid_t pid=-1;
     bool active=true,alive=true,cancelled=false,truncated=false;
     std::string title,workspace,state="执行中",output;
+    TaskUsage usage;
 };
 void drain(Job &j){
     char buffer[4096];
@@ -45,8 +46,10 @@ void drain(Job &j){
     }
 }
 }
-void task_event(App &app,char state){
-    if(app.task_events>=0){ssize_t n=write(app.task_events,&state,1);(void)n;}
+void task_event(App &app,std::string_view bytes){
+    if(app.task_events<0)return;
+    ssize_t sent;
+    do{sent=write(app.task_events,bytes.data(),bytes.size());}while(sent<0&&errno==EINTR);
 }
 ResourceLock::ResourceLock(App &app,bool desktop){
     std::string directory=desktop?app.config_dir:std::string(app.root)+"/.desk-agent";
@@ -91,6 +94,7 @@ void Tasks::refresh(){
     for(auto &j:impl->jobs){
         char events[128];ssize_t n;
         while((n=read(j.events,events,sizeof events))>0)for(ssize_t k=0;k<n;k++){
+            if(j.usage.consume(events[k]))continue;
             if(events[k]=='d'){j.state="已完成";j.active=false;}
             else if(events[k]=='f'){j.state="失败";j.active=false;}
             else if(events[k]=='c'){j.state="已取消";j.active=false;}
@@ -109,6 +113,12 @@ void Tasks::refresh(){
             drain(j);
         }
     }
+}
+std::uint64_t Tasks::tokens(){
+    refresh();
+    std::uint64_t total=0;
+    for(const auto &job:impl->jobs)total=add_tokens(total,job.usage.total);
+    return total;
 }
 int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     refresh();

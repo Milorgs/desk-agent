@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -259,6 +260,20 @@ J *native_response(App *a,J *data){
     seterr(a,tr("Anthropic 工具或内容块格式无效，本轮工具未执行。"));
     return NULL;
 }
+static std::uint64_t reported_tokens(J *usage,bool native){
+    auto count=[usage](const char *name){
+        J *value=get(usage,name);
+        if(!json_object_is_type(value,json_type_int)||json_object_get_int64(value)<0)return std::uint64_t{0};
+        return json_object_get_uint64(value);
+    };
+    if(native){
+        auto input=add_tokens(count("input_tokens"),count("cache_creation_input_tokens"));
+        input=add_tokens(input,count("cache_read_input_tokens"));
+        return add_tokens(input,count("output_tokens"));
+    }
+    auto total=count("total_tokens");
+    return total?total:add_tokens(count("prompt_tokens"),count("completion_tokens"));
+}
 J *api_complete(App *a,J *c,J *messages,J *tools){
     bool native=!strcmp(sget(c,"protocol"),"anthropic");
     J *body;
@@ -276,6 +291,13 @@ J *api_complete(App *a,J *c,J *messages,J *tools){
     J *data=api_request(a,c,native?"/messages":"/chat/completions",body);
     json_object_put(body);
     if(!data)return NULL;
+    auto tokens=reported_tokens(get(data,"usage"),native);
+    a->tokens=add_tokens(a->tokens,tokens);
+    if(tokens&&a->task_events>=0){
+        char event[1+sizeof tokens]={'u'};
+        std::memcpy(event+1,&tokens,sizeof tokens);
+        task_event(*a,std::string_view(event,sizeof event));
+    }
     J *result=NULL;
     if(native)result=native_response(a,data);
     else{

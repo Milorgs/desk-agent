@@ -8,6 +8,7 @@ struct Job {
     std::string title,workspace,state="执行中",text;
     WinHandle process,group,feed,approval,logs,events,cancellation;
     std::mutex mutex;std::jthread reader;
+    TaskUsage usage;
 };
 void bounded_output(Job &job,const char *bytes,size_t count){
     job.text.append(bytes,count);if(job.text.size()>65536){size_t cut=job.text.size()-65536;while(cut<job.text.size()&&(static_cast<unsigned char>(job.text[cut])&0xc0)==0x80)cut++;job.text.erase(0,cut);job.truncated=true;}
@@ -19,6 +20,7 @@ void pump(Job &job){
         std::lock_guard lock(job.mutex);
         if(!events)bounded_output(job,bytes,count);
         else for(DWORD k=0;k<count;k++){
+            if(job.usage.consume(bytes[k]))continue;
             if(bytes[k]=='d'){job.state="已完成";job.active=false;}
             else if(bytes[k]=='f'){job.state="失败";job.active=false;}
             else if(bytes[k]=='c'){job.state="已取消";job.active=false;}
@@ -42,7 +44,9 @@ struct Lines {
     }
 };
 }
-void task_event(App &app,char event){if(app.task_events>=0){DWORD count=0;WriteFile(reinterpret_cast<HANDLE>(app.task_events),&event,1,&count,nullptr);}}
+void task_event(App &app,std::string_view bytes){
+    if(app.task_events>=0)win_write(reinterpret_cast<HANDLE>(app.task_events),bytes);
+}
 ResourceLock::ResourceLock(App &app,bool desktop){
     std::string directory=desktop?app.config_dir:std::string(app.root)+"/.desk-agent";
     if(mkdirs(directory.c_str(),0700))return;
@@ -84,6 +88,14 @@ void Tasks::refresh(){
             if(job->active)job->state=job->cancelled?"已取消":code==0?"已完成":"失败";job->active=false;
         }
     }
+}
+std::uint64_t Tasks::tokens(){
+    std::uint64_t total=0;
+    for(auto &job:impl->jobs){
+        std::lock_guard lock(job->mutex);
+        total=add_tokens(total,job->usage.total);
+    }
+    return total;
 }
 int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     refresh();size_t active=0;for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);if(job->active)active++;}

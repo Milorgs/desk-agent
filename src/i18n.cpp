@@ -6,13 +6,20 @@ namespace {
 bool english=false;
 struct Translation {const char *zh,*en;};
 constexpr Translation catalog[]={
+    {"  本次运行 Token（接口报告）：%llu\n","  Tokens this run (reported by API): %llu\n"},
+    {"  已导入的模型","  Imported models"},
+    {"    暂无已导入的模型","    No imported models"},
+    {"  当前模型：%s / %s\n","  Current model: %s / %s\n"},
+    {"  当前模型：未配置","  Current model: not configured"},
     {"新对话","New conversation"},
     {"\n对话：%s\n","\nConversation: %s\n"},
     {"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。","Ctrl+D to return to conversations, Ctrl+C to stop the current operation, / for numbered actions."},
     {"\n选择对话（仅本次运行保留）","\nChoose a conversation (this run only)"},
-    {"\n  [1] 新建对话\n  [2] 重命名对话\n  [0] 返回主菜单\n  Ctrl+D 退出","\n  [1] New conversation\n  [2] Rename conversation\n  [0] Main menu\n  Ctrl+D to exit"},
+    {"\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [0] 返回主菜单\n  Ctrl+D 退出","\n  [1] New conversation\n  [2] Rename conversation\n  [3] Delete conversation\n  [0] Main menu\n  Ctrl+D to exit"},
     {"还没有对话。","No conversations yet."},
     {"输入上方要重命名的对话编号（0 返回）。","Enter a conversation number from above to rename it (0 to go back)."},
+    {"输入上方要删除的对话编号（0 返回）。","Enter a conversation number from above to delete it (0 to go back)."},
+    {"删除「%s」？\n  [1] 确认删除\n  [0] 取消\n","Delete ‘%s’?\n  [1] Confirm deletion\n  [0] Cancel\n"},
     {"新标题（空行取消）：","New title (empty line to cancel): "},
 
     {"输入超过 64 KB，请缩短后重试。","Input exceeds 64 KB. Please shorten it and try again."},
@@ -286,7 +293,7 @@ constexpr Translation catalog[]={
     {"请输入需求（回车返回）：","Enter your request (Enter to go back): "},
     {"\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [0] 返回输入","\nChat actions\n  [1] New conversation\n  [2] Select model\n  [3] Tasks\n  [4] Settings\n  [5] View status\n  [0] Back to request"},
     {"请输入需求（回车返回主菜单，输入 / 打开对话操作）：","Enter a request (Enter to return to the main menu, or / for chat actions): "},
-    {"\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出\n","\n  desk %s\n  Model: %s%s%s\n\n  [1] Start chat\n  [2] Select model\n  [3] Add model\n  [4] Tasks\n  [5] Settings\n  [6] View status\n  Ctrl+D to exit\n"},
+    {"\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出","\n  [1] Start chat\n  [2] Select model\n  [3] Add model\n  [4] Tasks\n  [5] Settings\n  [6] View status\n  Ctrl+D to exit"},
     {"运行 desk 后，使用数字菜单完成对话、任务管理和设置。","Run desk and use the numbered menus for chat, tasks and settings."},
     {"本轮超过上下文预算，请拆分任务或选择新建对话。","This turn exceeds the context budget. Split the task or select New conversation."},
     {"桌面资源等待已取消、被占用或无法加锁；请进入任务管理处理已有任务。","Desktop access was cancelled, is busy or cannot be locked. Handle existing tasks in Tasks."},

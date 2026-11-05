@@ -9,7 +9,7 @@
 #include <signal.h>
 #include <limits.h>
 #include <sys/types.h>
-#include <stdint.h>
+#include <cstdint>
 #include "platform.hpp"
 #include <memory>
 #include <atomic>
@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.5.5"
+#define VERSION "1.5.6"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -34,6 +34,7 @@ struct App {
     std::intptr_t task_events=-1;
     const char *state="等待任务";
     void *desktop_data=nullptr;
+    std::uint64_t tokens=0;
 };
 extern std::atomic<int> interrupted;
 extern std::atomic<bool> input_closed;

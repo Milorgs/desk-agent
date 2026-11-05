@@ -620,12 +620,13 @@ static void test_anthropic_loop(void){
     json_object_put(a.config);
     a.config=config("claude","anthropic");
     const char *responses[]={
-        "{\"role\":\"assistant\",\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"private\",\"signature\":\"signed-value\"},{\"type\":\"tool_use\",\"id\":\"write\",\"name\":\"write_file\",\"input\":{\"path\":\"hello.txt\",\"content\":\"native C\",\"expected_sha256\":null}},{\"type\":\"tool_use\",\"id\":\"read\",\"name\":\"read_file\",\"input\":{\"path\":\"hello.txt\"}}]}", "{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Native done.\"}]}"
+        "{\"usage\":{\"input_tokens\":5,\"cache_read_input_tokens\":7,\"cache_creation_input_tokens\":11,\"output_tokens\":3},\"role\":\"assistant\",\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"private\",\"signature\":\"signed-value\"},{\"type\":\"tool_use\",\"id\":\"write\",\"name\":\"write_file\",\"input\":{\"path\":\"hello.txt\",\"content\":\"native C\",\"expected_sha256\":null}},{\"type\":\"tool_use\",\"id\":\"read\",\"name\":\"read_file\",\"input\":{\"path\":\"hello.txt\"}}]}", "{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Native done.\"}]}"
     };
     pid_t child=fake_server(&a,responses,2);
     int result=run_task(&a,"native create and read");
     server_done(child);
     CHECK(result==0);
+    CHECK(a.tokens==26);
     J *r=capture(&a,1);
     CHECK(!get(r,"authorization"));
     CHECK(get(r,"key"));
@@ -994,11 +995,13 @@ static void test_reasoning_modes(void){
 static void test_assisted_worker(void){
     App a=fresh();json_object_put(a.config);a.config=config("assisted","openai");a.yes=false;a.auto_edit=true;put(a.config,"reasoning_effort",str("high"));
     J *write=args("assisted.txt");put(write,"content",str("auto-approved"));put(write,"expected_sha256",nullptr);
-    std::string first=model_tool("write","write_file",write),second=model_tool("run","run_shell",command("touch command-must-wait.txt"));const char *responses[]={first.c_str(),second.c_str()};pid_t server=fake_server(&a,responses,2);
+    std::string first=model_tool("write","write_file",write),second=model_tool("run","run_shell",command("touch command-must-wait.txt"));first.insert(first.size()-1,",\"usage\":{\"total_tokens\":17}");
+    second.insert(second.size()-1,",\"usage\":{\"prompt_tokens\":19,\"completion_tokens\":4}");
+    const char *responses[]={first.c_str(),second.c_str()};pid_t server=fake_server(&a,responses,2);
     {
         Tasks jobs("./build/desk");int id=jobs.start(a,"edit then ask for command approval");CHECK(id==1);
         a.auto_edit=false;a.yes=true;put(a.config,"reasoning_effort",str("low"));
-        CHECK(await_state(jobs,id,"等待确认"));char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/assisted.txt"));char *content=read_bytes(path,100,nullptr);CHECK(content&&!strcmp(content,"auto-approved"));free(content);
+        CHECK(await_state(jobs,id,"等待确认"));CHECK(jobs.tokens()==40);char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/assisted.txt"));char *content=read_bytes(path,100,nullptr);CHECK(content&&!strcmp(content,"auto-approved"));free(content);
         CHECK(!path_suffix(path,a.root,"/command-must-wait.txt"));CHECK(access(path,F_OK)!=0);
         JsonPtr request(capture(&a,1));CHECK(!strcmp(sget(get(request.get(),"body"),"reasoning_effort"),"high"));
         CHECK(jobs.cancel(id));CHECK(await_state(jobs,id,"已取消"));CHECK(access(path,F_OK)!=0);
@@ -1141,6 +1144,8 @@ static void test_conversation_picker(void){
     App a=fresh();json_object_put(a.config);a.config=config("conversation-picker","openai");
     const std::string first="请帮我整理比赛资料。后续说明",second="Draft a demo video",follow="Continue the notes",third="Write a release checklist";
     std::vector<std::string> replies={model_reply(nullptr,"REPLY_ONE"),model_reply(nullptr,"REPLY_TWO"),model_reply(nullptr,"REPLY_RESUMED"),model_reply(nullptr,"REPLY_FRESH")};
+    replies[0].insert(replies[0].size()-1,",\"usage\":{\"total_tokens\":12}");
+    replies[1].insert(replies[1].size()-1,",\"usage\":{\"total_tokens\":18}");
     const char *responses[]={replies[0].c_str(),replies[1].c_str(),replies[2].c_str(),replies[3].c_str()};
     pid_t server=fake_server(&a,responses,4);CHECK(!save_config(&a,a.config));
     JsonPtr alternate(copy(a.config));put(alternate.get(),"profile",str("alternate"));put(alternate.get(),"model",str("alternate-model"));
@@ -1152,17 +1157,31 @@ static void test_conversation_picker(void){
         execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
     }
     std::string output;
+    CHECK(terminal_until(master,output,"Tokens this run (reported by API): 0"));
+    CHECK(output.find("Imported models")!=std::string::npos);
+    CHECK(output.find("alternate / alternate-model")!=std::string::npos);
+    CHECK(output.find("Current model: conversation-picker / model-test")!=std::string::npos);
     type_terminal(master,output,"1\n1\n"+first+"\n");CHECK(terminal_until(master,output,"REPLY_ONE"));wait_for_chat_prompt(master,output,"REPLY_ONE");
     CHECK(write(master,"\x04",1)==1);output.clear();
-    CHECK(terminal_until(master,output,"3. 整理比赛资料"));CHECK(terminal_until(master,output,"Select a number:"));
-    output.clear();type_terminal(master,output,"2\n3\n我的比赛笔记\n");
-    CHECK(terminal_until(master,output,"3. 我的比赛笔记"));
+    CHECK(terminal_until(master,output,"4. 整理比赛资料"));CHECK(output.find("Tokens this run (reported by API): 12")!=std::string::npos);CHECK(terminal_until(master,output,"Select a number:"));
+    output.clear();type_terminal(master,output,"2\n4\n我的比赛笔记\n");
+    CHECK(terminal_until(master,output,"4. 我的比赛笔记"));
     output.clear();type_terminal(master,output,"0\n2\n2\n1\n1\n"+second+"\n");CHECK(terminal_until(master,output,"REPLY_TWO"));wait_for_chat_prompt(master,output,"REPLY_TWO");
     CHECK(write(master,"\x04",1)==1);output.clear();
-    CHECK(terminal_until(master,output,"4. Draft a demo video"));CHECK(output.find("3. 我的比赛笔记")!=std::string::npos);
+    CHECK(terminal_until(master,output,"5. Draft a demo video"));CHECK(output.find("4. 我的比赛笔记")!=std::string::npos);
     CHECK(terminal_until(master,output,"[2] Rename conversation"));
-    CHECK(output.find("4. Draft a demo video")<output.find("[2] Rename conversation"));
-    output.clear();type_terminal(master,output,"3\n"+follow+"\n");
+    CHECK(output.find("5. Draft a demo video")<output.find("[2] Rename conversation"));
+    output.clear();type_terminal(master,output,"3\n5\n0\n");
+    CHECK(terminal_until(master,output,"[1] Confirm deletion"));
+    CHECK(terminal_until(master,output,"5. Draft a demo video"));
+    output.clear();type_terminal(master,output,"3\n5\n1\n");
+    CHECK(terminal_until(master,output,"Choose a conversation (this run only)"));
+    auto after_delete=output.substr(output.find("Choose a conversation (this run only)"));
+    CHECK(terminal_until(master,after_delete,"Select a number:"));
+    CHECK(after_delete.find("Draft a demo video")==std::string::npos);
+    CHECK(after_delete.find("4. 我的比赛笔记")!=std::string::npos);
+    CHECK(after_delete.find("Tokens this run (reported by API): 30")!=std::string::npos);
+    output.clear();type_terminal(master,output,"4\n"+follow+"\n");
     CHECK(terminal_until(master,output,"Conversation: 我的比赛笔记"));CHECK(terminal_until(master,output,"REPLY_RESUMED"));
     output.clear();type_terminal(master,output,"/\n1\n"+third+"\n");CHECK(terminal_until(master,output,"REPLY_FRESH"));wait_for_chat_prompt(master,output,"REPLY_FRESH");
     leave_chat_and_exit(master);

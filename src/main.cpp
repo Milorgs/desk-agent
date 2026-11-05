@@ -336,26 +336,40 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr){
         if(run_task(a,task.c_str())&&!input_closed)fprintf(stderr,"%s\n",a->error);
     }
 }
+static void show_token_usage(const App &app,Tasks &jobs){
+    printf(tr("  本次运行 Token（接口报告）：%llu\n"),
+        static_cast<unsigned long long>(add_tokens(app.tokens,jobs.tokens())));
+}
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
     bool new_chat=false;
     while(interrupted!=SIGTERM&&!input_closed){
         int choice=1;
         if(!new_chat){
             puts(tr("\n选择对话（仅本次运行保留）"));
+            show_token_usage(*a,jobs);
             if(items.empty())puts(tr("还没有对话。"));
-            for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+3,title_of(items[i]));
-            puts(tr("\n  [1] 新建对话\n  [2] 重命名对话\n  [0] 返回主菜单\n  Ctrl+D 退出"));
-            choice=number(jobs,static_cast<int>(items.size()+2));
+            for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+4,title_of(items[i]));
+            puts(tr("\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [0] 返回主菜单\n  Ctrl+D 退出"));
+            choice=number(jobs,static_cast<int>(items.size()+3));
             if(choice<=0)return;
         }
         new_chat=false;
-        if(choice==2){
-            if(items.empty()){puts(tr("还没有对话。"));continue;}
-            puts(tr("输入上方要重命名的对话编号（0 返回）。"));
-            int which=number(jobs,static_cast<int>(items.size()+2));
-            if(which>=3){
+        if(choice==2||choice==3){
+            if(items.empty()){
+                puts(tr("还没有对话。"));
+                continue;
+            }
+            bool deleting=choice==3;
+            puts(tr(deleting?"输入上方要删除的对话编号（0 返回）。":"输入上方要重命名的对话编号（0 返回）。"));
+            int which=number(jobs,static_cast<int>(items.size()+3));
+            if(which<4)continue;
+            auto item=items.begin()+(which-4);
+            if(deleting){
+                printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
+                if(number(jobs,1)==1)items.erase(item);
+            }else{
                 auto title=conversation_title(request_text(jobs,tr("新标题（空行取消）：")),false);
-                if(!title.empty())items[static_cast<size_t>(which-3)].title=std::move(title);
+                if(!title.empty())item->title=std::move(title);
             }
             continue;
         }
@@ -363,7 +377,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             if(config_valid(a,a->config)){puts(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
             items.push_back({{},JsonPtr(arr()),JsonPtr(copy(a->config))});
         }
-        auto &item=items[choice==1?items.size()-1:static_cast<size_t>(choice-3)];
+        auto &item=items[choice==1?items.size()-1:static_cast<size_t>(choice-4)];
         JsonPtr previous(a->messages);
         a->messages=item.messages.release();
         json_object_put(a->config);a->config=copy(item.config.get());
@@ -382,7 +396,19 @@ static int menu(App *a){
     std::vector<Conversation> conversations;
     for(;;){
         if(input_closed)return 0;
-        printf(tr("\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出\n"),VERSION,*sget(a->config,"model")?sget(a->config,"profile"):tr("未配置"),*sget(a->config,"model")?" / ":"",sget(a->config,"model"));
+        printf("\n  desk %s\n",VERSION);
+        puts(tr("  已导入的模型"));
+        J *profiles=get(a->store,"profiles");
+        if(!json_object_object_length(profiles))puts(tr("    暂无已导入的模型"));
+        else{
+            json_object_object_foreach(profiles,name,profile){
+                printf("    %s / %s\n",name,sget(profile,"model"));
+            }
+        }
+        if(*sget(a->config,"model"))printf(tr("  当前模型：%s / %s\n"),sget(a->config,"profile"),sget(a->config,"model"));
+        else puts(tr("  当前模型：未配置"));
+        show_token_usage(*a,jobs);
+        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  Ctrl+D 退出"));
         int choice=number(jobs,6);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice){puts(tr("请按 Ctrl+D 退出。"));continue;}
