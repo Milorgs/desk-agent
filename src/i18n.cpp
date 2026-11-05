@@ -21,7 +21,7 @@ constexpr Translation catalog[]={
     {"\n对话：%s\n","\nConversation: %s\n"},
     {"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。","Ctrl+D to return to conversations, Ctrl+C to stop the current operation, / for numbered actions."},
     {"\n选择对话（仅本次运行保留）","\nChoose a conversation (this run only)"},
-    {"\n  [1] 新建对话\n  [2] 重命名对话\n  [3] 删除对话\n  [4] 返回主菜单\n  [0] 退出","\n  [1] New conversation\n  [2] Rename conversation\n  [3] Delete conversation\n  [4] Main menu\n  [0] Exit"},
+    {"\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [%d] 返回主菜单\n  [0] 退出\n","\n  [%d] New conversation\n  [%d] Rename conversation\n  [%d] Delete conversation\n  [%d] Main menu\n  [0] Exit\n"},
     {"还没有对话。","No conversations yet."},
     {"输入上方要重命名的对话编号（0 返回）。","Enter a conversation number from above to rename it (0 to go back)."},
     {"输入上方要删除的对话编号（0 返回）。","Enter a conversation number from above to delete it (0 to go back)."},

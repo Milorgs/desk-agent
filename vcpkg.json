@@ -1,6 +1,6 @@
 {
   "name": "desk-agent",
-  "version-string": "1.5.12",
+  "version-string": "1.5.13",
   "dependencies": [
     "curl",
     "json-c",
