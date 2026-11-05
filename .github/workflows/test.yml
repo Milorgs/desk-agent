@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         mode: [release, sanitize]
@@ -18,10 +18,35 @@ jobs:
             make sanitize
           else
             make test
+            make test-mcp-http
             ./build/desk --version
             ./install.sh --prefix "$RUNNER_TEMP/desk-install"
             "$RUNNER_TEMP/desk-install/bin/desk" --version
           fi
+
+      - name: Package Linux executable
+        if: matrix.mode == 'release'
+        run: |
+          mkdir -p dist/desk-agent-linux-x64
+          install -m 755 build/desk dist/desk-agent-linux-x64/desk
+          strip dist/desk-agent-linux-x64/desk
+          install -m 755 linux/install.sh dist/desk-agent-linux-x64/install.sh
+          cp linux/README.txt dist/desk-agent-linux-x64/
+          ldd dist/desk-agent-linux-x64/desk > dist/desk-agent-linux-x64/DEPENDENCIES.txt
+          tar -C dist -czf dist/desk-agent-linux-x64.tar.gz desk-agent-linux-x64
+          (cd dist && sha256sum desk-agent-linux-x64.tar.gz > SHA256SUMS-linux.txt)
+          mkdir -p "$RUNNER_TEMP/desk-package-check"
+          tar -xzf dist/desk-agent-linux-x64.tar.gz -C "$RUNNER_TEMP/desk-package-check"
+          sh "$RUNNER_TEMP/desk-package-check/desk-agent-linux-x64/install.sh" --prefix "$RUNNER_TEMP/desk-binary-install"
+          "$RUNNER_TEMP/desk-binary-install/bin/desk" --version
+      - uses: actions/upload-artifact@v4
+        if: matrix.mode == 'release'
+        with:
+          name: desk-agent-linux-x64
+          if-no-files-found: error
+          path: |
+            dist/desk-agent-linux-x64.tar.gz
+            dist/SHA256SUMS-linux.txt
 
   windows:
     runs-on: windows-latest
@@ -33,6 +58,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: windows-x64-static-${{ hashFiles('vcpkg.json') }}
+          restore-keys: windows-x64-static-
       - name: Prepare vcpkg
         shell: pwsh
         run: |
@@ -64,12 +90,13 @@ jobs:
           Copy-Item build/windows/Release/desk.exe dist/desk-agent-windows-x64/
           Copy-Item windows/install.ps1,windows/README.txt dist/desk-agent-windows-x64/
           New-Item -ItemType Directory -Force dist/desk-agent-windows-x64/licenses | Out-Null
-          foreach ($dependency in @('curl','json-c','openssl','zlib')) {
-            Copy-Item "build/windows/vcpkg_installed/x64-windows-static/share/$dependency/copyright" "dist/desk-agent-windows-x64/licenses/$dependency.txt"
+          Get-ChildItem build/windows/vcpkg_installed/x64-windows-static/share -Directory | ForEach-Object {
+            $copyright = Join-Path $_.FullName 'copyright'
+            if (Test-Path $copyright) { Copy-Item $copyright "dist/desk-agent-windows-x64/licenses/$($_.Name).txt" }
           }
           Compress-Archive -Path dist/desk-agent-windows-x64/* -DestinationPath dist/desk-agent-windows-x64.zip
           $digest = (Get-FileHash dist/desk-agent-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
-          "$digest  desk-agent-windows-x64.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ASCII
+          "$digest  desk-agent-windows-x64.zip" | Set-Content dist/SHA256SUMS-windows.txt -Encoding ASCII
           $version = (& dist/desk-agent-windows-x64/desk.exe --version).Trim()
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid version' }
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -80,32 +107,36 @@ jobs:
           name: desk-agent-windows-x64
           path: |
             dist/desk-agent-windows-x64.zip
-            dist/SHA256SUMS.txt
+            dist/SHA256SUMS-windows.txt
       - uses: actions/cache/save@v4
         if: always()
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: windows-x64-static-${{ hashFiles('vcpkg.json') }}
-  release-windows:
+  release:
     needs: [test, windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: desk-agent-windows-x64
+          pattern: desk-agent-*-x64
+          merge-multiple: true
           path: dist
-      - name: Publish Windows package
+      - name: Publish Windows and Linux packages
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           DESK_VERSION: ${{ needs.windows.outputs.version }}
         run: |
           tag="v$DESK_VERSION"
+          cat dist/SHA256SUMS-linux.txt dist/SHA256SUMS-windows.txt > dist/SHA256SUMS.txt
+          (cd dist && sha256sum -c SHA256SUMS.txt)
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; keeping the published package."
           else
-            gh release create "$tag" dist/desk-agent-windows-x64.zip dist/SHA256SUMS.txt --target "$GITHUB_SHA" --title "desk $DESK_VERSION — Windows x64" --notes 'Native Windows 10/11 x64 CLI. Numbered menus, OpenAI/Anthropic APIs, file editing, PowerShell commands, parallel tasks and UI Automation. No model configuration or API key is included. See README.txt inside the ZIP.'
+            gh release create "$tag" dist/desk-agent-windows-x64.zip dist/desk-agent-linux-x64.tar.gz dist/SHA256SUMS.txt --target "$GITHUB_SHA" --title "desk-agent $DESK_VERSION — Windows / Linux" --notes-file "docs/releases/$tag.md"
           fi

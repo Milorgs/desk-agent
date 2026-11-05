@@ -87,9 +87,19 @@ char *canonical_directory(const char *path,char *out){
     auto text=path_text(resolved);if(text.size()>=PATH_MAX)return nullptr;memcpy(out,text.c_str(),text.size()+1);return out;
 }
 bool path_inside(const fs::path &root,const fs::path &path){
+#ifdef _WIN32
+    // generic_u8string() uses '/', while canonical Windows paths can use '\\'.
+    // Normalize separators before comparing individual components.
+    auto preferred_root=root,preferred_path=path;
+    preferred_root.make_preferred();preferred_path.make_preferred();
+    auto a=preferred_root.begin(),b=preferred_path.begin();
+    const auto a_end=preferred_root.end(),b_end=preferred_path.end();
+#else
     auto a=root.begin(),b=path.begin();
-    for(;a!=root.end();++a,++b){
-        if(b==path.end())return false;
+    const auto a_end=root.end(),b_end=path.end();
+#endif
+    for(;a!=a_end;++a,++b){
+        if(b==b_end)return false;
 #ifdef _WIN32
         if(CompareStringOrdinal(a->native().c_str(),-1,b->native().c_str(),-1,TRUE)!=CSTR_EQUAL)return false;
 #else

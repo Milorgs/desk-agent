@@ -2,7 +2,7 @@
 
 Linux / Windows AI 电脑助手。在终端输入 `desk`，用自然语言搜索和修改文件、执行命令，或通过桌面控件操作应用。支持保存多套模型配置，切换 OpenAI接口和 Anthropic接口。
 
-当前版本 **1.6.1**。减少工具定义的重复构造和拷贝，连续 API 请求复用连接，HTTP 资源由 C++ 自动管理，Make 支持增量编译。新增 MCP 数字菜单，支持导入 JSON 配置与直接添加远程地址，模型可调用导入的工具。支持本次运行内的对话列表、自动标题与重命名。修复中文退格、长行编辑和输入残留，任务执行时提前输入的文字会保留到下一轮。操作过程默认显示简短进度，主菜单使用数字 0 退出。新增六档推理选择与三种批准模式。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 与 MCP 集成测试使用本地模拟服务，真实服务和真实桌面操作仍需用户环境联调。
+当前版本 **1.6.2**。修复 Windows 路径分隔符比较，同步提供 Windows / Linux 下载包。减少工具定义的重复构造和拷贝，连续 API 请求复用连接，HTTP 资源由 C++ 自动管理，Make 支持增量编译。新增 MCP 数字菜单，支持导入 JSON 配置与直接添加远程地址，模型可调用导入的工具。支持本次运行内的对话列表、自动标题与重命名。修复中文退格、长行编辑和输入残留，任务执行时提前输入的文字会保留到下一轮。操作过程默认显示简短进度，主菜单使用数字 0 退出。新增六档推理选择与三种批准模式。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 与 MCP 集成测试使用本地模拟服务，真实服务和真实桌面操作仍需用户环境联调。
 
 ## Windows 安装
 
@@ -19,6 +19,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 Windows 使用 PowerShell 执行命令；桌面使用 UI Automation，适合提供标准控件的应用。工作目录、中文路径、数字菜单、中英文界面、OpenAI / Anthropic 接口和并行任务共用同一套交互。真实模型与桌面应用仍需在用户电脑联调。
 
 ## Linux 安装
+
+从 [Releases](https://github.com/Milorgs/desk-agent/releases) 下载 `desk-agent-linux-x64.tar.gz`，解压后运行 `./desk`，或执行 `sh ./install.sh --setup-path` 安装预编译程序。该包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 以及 libcurl、json-c、OpenSSL 3、Readline 8 和 AT-SPI 的系统运行库。其他发行版可按下面的方法从源码编译。
+
+源码安装：
 
 需要支持 C++20 的编译器、Make、pkg-config、libcurl、json-c、OpenSSL 和 GNU Readline 开发库。AT-SPI 开发库可选：检测到时编译桌面功能，否则文件、API 和终端功能仍可使用。
 
@@ -280,3 +284,5 @@ ctest --test-dir build/windows -C Release --output-on-failure
 ```
 
 Windows CI 检查 UTF-8 文件、私有 ACL、PowerShell 输出与超时、子进程清理、模拟双接口、任务并行、确认、继续和单任务取消，然后生成 ZIP。桌面适配参与编译，但测试不会操作真实桌面。发布包使用静态依赖，不要求用户安装编译环境。
+
+Windows 和 Linux 均通过测试后，主分支的发布流程会在同一个 Release 中提供两个下载包与 SHA256 校验文件。

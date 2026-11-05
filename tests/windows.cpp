@@ -80,6 +80,10 @@ static bool private_acl(const fs::path &path){
     LocalFree(descriptor);return valid;
 }
 static void test_files_config(){
+    CHECK(path_inside(fs_path("C:/Work/项目"),fs::path(L"c:\\Work\\项目\\file.txt")));
+    CHECK(path_inside(fs::path(L"C:\\Work\\项目"),fs_path("c:/work/项目/file.txt")));
+    CHECK(!path_inside(fs_path("C:/Work"),fs::path(L"C:\\Workspace\\file.txt")));
+    CHECK(!path_inside(fs_path("C:/Work"),fs::path(L"D:\\Work\\file.txt")));
     Fixture fixture;App &app=fixture.app;JsonPtr args(path_args("你好.txt"));put(args.get(),"content",str("第一版\r\nkeep\r\n"));put(args.get(),"expected_sha256",nullptr);
     JsonPtr result(tool_call(&app,"write_file",args.get()));CHECK(checked(result.get()));args.reset(path_args("你好.txt"));result.reset(tool_call(&app,"read_file",args.get()));CHECK(!strcmp(sget(result.get(),"content"),"第一版\r\nkeep\r\n"));std::string hash=sget(result.get(),"sha256");
     put(args.get(),"expected_sha256",str(hash.c_str()));put(args.get(),"old_text",str("第一版"));put(args.get(),"new_text",str("第二版 😀"));result.reset(tool_call(&app,"edit_file",args.get()));CHECK(checked(result.get()));CHECK(bget(result.get(),"verified"));

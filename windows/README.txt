@@ -7,7 +7,7 @@ Open a NEW terminal after installation, then enter desk.
 
 All interactive actions use numbered menus. Select 3 to add YOUR OWN model;
 the package includes no configuration, API keys, or conversation records.
-Language: main menu 5 -> 1 -> 2 for English, or .\desk.exe --lang en.
+Language: main menu 4 -> 1 -> 2 for English, or .\desk.exe --lang en.
 Commands use Windows PowerShell (not bash). Parallel tasks, file edits and both
 OpenAI/Anthropic APIs are supported. Desktop tools use UI Automation controls;
 password controls are skipped. UI Automation cannot control elevated windows
@@ -21,3 +21,6 @@ No system/persona/language prompt is added to model calls. Provider replies are 
 Uninstall: delete the installation folder, and remove its entry from your USER Path.
 Configuration is separate; delete %LOCALAPPDATA%\desk-agent only if you intend to
 remove your model keys and optional session records.
+
+MCP: main menu 5 imports JSON or a remote Streamable HTTP URL.
+Windows currently supports remote MCP only; local stdio MCP is Linux-only.
