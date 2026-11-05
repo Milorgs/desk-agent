@@ -111,7 +111,9 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
             continue;
         }
         const char *help=status==401?tr("密钥无效或已过期。"):status==403?tr("没有模型或接口权限。"):status==404?tr("地址或模型不存在。"):status==429?tr("限流或额度不足。"):status==400?tr("接口类型或参数不兼容。"):tr("服务商请求失败。");
-        snprintf(a->error,sizeof a->error,"API HTTP %ld：%s",status,help);
+        if(status==400&&payload&&*sget(c,"reasoning_effort"))
+            snprintf(a->error,sizeof a->error,"API HTTP 400：%s",tr("接口或模型可能不支持所选推理档位或工具组合；请调整档位或恢复服务商默认。未自动降档或更换模型。"));
+        else snprintf(a->error,sizeof a->error,"API HTTP %ld：%s",status,help);
         return NULL;
     }
     return NULL;
@@ -141,6 +143,11 @@ J *native_payload(J *c,J *messages,J *tools){
     J *body=obj(),*history=arr();
     put(body,"model",str(sget(c,"model")));
     put(body,"max_tokens",json_object_new_int(iget(c,"max_tokens",4096)));
+    const char *effort=sget(c,"reasoning_effort");
+    if(*effort){
+        J *thinking=obj();put(thinking,"type",str(!strcmp(effort,"none")?"disabled":"adaptive"));put(body,"thinking",thinking);
+        if(strcmp(effort,"none")){J *output=obj();put(output,"effort",str(effort));put(body,"output_config",output);}
+    }
     put(body,"messages",history);
     for(size_t i=0;i<alen(messages);i++){
         J *m=at(messages,i);
@@ -259,6 +266,7 @@ J *api_complete(App *a,J *c,J *messages,J *tools){
         body=obj();
         put(body,"model",str(sget(c,"model")));
         put(body,"messages",copy(messages));
+        if(*sget(c,"reasoning_effort"))put(body,"reasoning_effort",str(sget(c,"reasoning_effort")));
         if(alen(tools)){
             put(body,"tools",copy(tools));
             put(body,"tool_choice",str("auto"));

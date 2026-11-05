@@ -15,7 +15,8 @@ static void on_signal(int number){
 }
 #endif
 static void status(App *a){
-    printf(tr("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n"),VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,tr(a->state?a->state:"等待任务"),a->desktop?tr("开启"):tr("关闭"),a->yes?tr("自动批准"):tr("执行前确认"));
+    printf(tr("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n"),VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,tr(a->state?a->state:"等待任务"),a->desktop?tr("开启"):tr("关闭"),permission_name(*a));
+    printf(tr("  推理模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")));
 }
 static char *field(const char *name,const char *fallback,bool secret){
     char prompt[8192];
@@ -205,19 +206,40 @@ static void model_id_menu(App *a,Tasks &jobs){
     if(save_config(a,candidate.get()))fprintf(stderr,"%s\n",a->error);
     else puts(tr("已保存新模型并清空对话。"));
 }
+static void approval_menu(App *a,Tasks &jobs){
+    puts(tr("\n批准模式\n  [1] 请求批准\n  [2] 帮我批准\n  [3] 完全访问权限\n  [0] 返回"));
+    puts(tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。"));
+    int selected=number(jobs,3);if(selected<=0)return;
+    a->yes=selected==3;a->auto_edit=selected==2;
+    printf(tr("批准模式：%s（本次运行）\n"),permission_name(*a));
+}
+static void reasoning_menu(App *a,Tasks &jobs){
+    bool native=!strcmp(sget(a->config,"protocol"),"anthropic");
+    const char *openai[]={"none","minimal","low","medium","high","xhigh"};
+    const char *anthropic[]={"none","low","medium","high","xhigh","max"};
+    const char **levels=native?anthropic:openai;
+    puts(tr("\n推理模式"));
+    for(int i=0;i<6;i++)printf("  [%d] %s (%s)\n",i+1,reasoning_name(levels[i]),levels[i]);
+    puts(tr("  [7] 恢复服务商默认（不传推理参数）\n  [0] 返回"));
+    puts(tr("仅发送接口原生参数；支持档位由模型决定，不自动更换模型、提高输出上限或降档。"));
+    int choice=number(jobs,7);if(choice<=0)return;
+    JsonPtr candidate(copy(a->config));
+    if(choice==7)json_object_object_del(candidate.get(),"reasoning_effort");
+    else put(candidate.get(),"reasoning_effort",str(levels[choice-1]));
+    if(save_config(a,candidate.get(),false))fprintf(stderr,"%s\n",a->error);
+    else printf(tr("已保存推理模式：%s；保留当前对话。\n"),reasoning_name(sget(a->config,"reasoning_effort")));
+}
 static void settings_menu(App *a,Tasks &jobs){
     for(;;){
-        puts(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 操作确认\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [0] 返回"));
-        int choice=number(jobs,6);if(choice<=0)return;
+        puts(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));
+        int choice=number(jobs,7);if(choice<=0)return;
         if(choice==1)language_menu(a,jobs);
         else if(choice==2){
             puts(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
             if(selected==1){a->desktop=true;puts(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
             else if(selected==2){a->desktop=false;desktop_clear(a);puts(tr("桌面工具已关闭。"));}
         }else if(choice==3){
-            puts(tr("\n操作确认\n  [1] 执行前确认\n  [2] 自动批准\n  [0] 返回"));int selected=number(jobs,2);
-            if(selected==1){a->yes=false;puts(tr("已恢复操作前确认。"));}
-            else if(selected==2){a->yes=true;puts(tr("已自动批准启用工具的操作。"));}
+            approval_menu(a,jobs);
         }else if(choice==4){
             std::string name=sget(a->config,"profile");
             if(configure(a,name.c_str(),nullptr,false))fprintf(stderr,"%s\n",a->error);
@@ -227,6 +249,7 @@ static void settings_menu(App *a,Tasks &jobs){
             if(api_check(a,a->config))fprintf(stderr,"%s\n",a->error);
             else puts(tr("连接成功，工具调用已验证。测试未操作电脑。"));
         }
+        else if(choice==7)reasoning_menu(a,jobs);
         if(interrupted==SIGTERM)return;
     }
 }
@@ -252,21 +275,27 @@ static void task_menu(App *a,Tasks &jobs){
     }
 }
 static int chat_menu(App *a,Tasks &jobs){
-    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [0] 返回输入"));
-    int choice=number(jobs,5);if(choice<=0)return 0;
+    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [0] 返回输入"));
+    int choice=number(jobs,7);if(choice<=0)return 0;
     if(choice==1){reset_session(a);puts(tr("已开始新对话。"));}
     else if(choice==2){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)task_menu(a,jobs);
     else if(choice==4)settings_menu(a,jobs);
     else if(choice==5)status(a);
+    else if(choice==6)reasoning_menu(a,jobs);
+    else if(choice==7)approval_menu(a,jobs);
     return interrupted==SIGTERM?-1:1;
 }
 static int chat(App *a,Tasks &jobs){
     status(a);
     puts(tr("任务及工具结果会发送到配置的 API。"));
+    puts(tr("输入 0 或空行返回主菜单，输入 / 打开数字操作菜单。"));
     for(;;){
-        std::string task=request_text(jobs,": ");
-        if(task.empty())return 1;
+        printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
+        std::unique_ptr<char,decltype(&free)> line(jobs.readline(": "),free);
+        if(!line)return interrupted==SIGINT?1:0;
+        std::string task=line.get();
+        if(task.empty()||task=="0")return 1;
         if(task=="/"){if(chat_menu(a,jobs)<0)return 0;continue;}
         if(run_task(a,task.c_str()))fprintf(stderr,"%s\n",a->error);
         if(interrupted==SIGTERM)return 0;

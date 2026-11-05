@@ -124,7 +124,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     if(pipe2(events,O_CLOEXEC|O_NONBLOCK)){close(payload[0]);close(payload[1]);seterr(&app,tr("无法创建状态管道。"));return -1;}
     JsonPtr data(obj());
     put(data.get(),"language",str(language_code()));put(data.get(),"config",copy(app.config));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));
-    put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));
+    put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));
     put(data.get(),"shell",json_object_new_boolean(app.shell));put(data.get(),"desktop",json_object_new_boolean(app.desktop));
     put(data.get(),"record",json_object_new_boolean(app.record));put(data.get(),"max_steps",json_object_new_int(app.max_steps));
     put(data.get(),"events",json_object_new_int(events[1]));
@@ -200,7 +200,7 @@ int task_worker(std::intptr_t fd){
     app.config=copy(get(data.get(),"config"));
     snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));
     snprintf(app.config_dir,sizeof app.config_dir,"%s",sget(data.get(),"config_dir"));
-    app.yes=bget(data.get(),"yes");app.shell=bget(data.get(),"shell");app.desktop=bget(data.get(),"desktop");app.record=bget(data.get(),"record");
+    app.yes=bget(data.get(),"yes");app.auto_edit=bget(data.get(),"auto_edit");app.shell=bget(data.get(),"shell");app.desktop=bget(data.get(),"desktop");app.record=bget(data.get(),"record");
     app.max_steps=iget(data.get(),"max_steps",20);app.task_events=iget(data.get(),"events",-1);
     if(app.task_events>=0)fcntl(app.task_events,F_SETFD,FD_CLOEXEC);
     auto cleanup=[](App *a){app_cleanup(a);};std::unique_ptr<App,decltype(cleanup)> guard(&app,cleanup);

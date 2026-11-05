@@ -16,7 +16,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.5.0"
+#define VERSION "1.5.1"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -28,7 +28,7 @@ using JsonPtr = std::unique_ptr<J,JsonDeleter>;
 struct App {
     J *store=nullptr, *config=nullptr, *messages=nullptr;
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
-    bool yes=false, shell=true, desktop=false, record=false;
+    bool yes=false, auto_edit=false, shell=true, desktop=false, record=false;
     int max_steps=20;
     std::intptr_t task_events=-1;
     const char *state="等待任务";
@@ -61,13 +61,17 @@ int path_suffix(char out[PATH_MAX],const char *base,const char *suffix);
 int mkdirs(const char *path,unsigned int mode);
 int atomic_file(const char *path,const void *data,size_t len,unsigned int mode);
 char *input(const char *prompt,const char *fallback,bool secret);
-int approve(App *a,const char *description);
+enum class Operation { Other, FileEdit };
+bool approval_required(const App &app,Operation operation=Operation::Other);
+const char *permission_name(const App &app);
+const char *reasoning_name(const char *effort);
+int approve(App *a,const char *description,Operation operation=Operation::Other);
 void id_string(char out[33]);
 double monotime(void);
 int store_load(App *a);
 int config_valid(App *a,J *config);
 J *config_default(const char *name);
-int save_config(App *a,J *config);
+int save_config(App *a,J *config,bool clear_session=true);
 int activate(App *a,const char *name);
 int config_name_valid(const char *name);
 int api_check(App *a,J *config);

@@ -95,10 +95,26 @@ int path_suffix(char out[PATH_MAX],const char *base,const char *suffix){
     memcpy(out+n,suffix,m+1);
     return 0;
 }
-int approve(App *a,const char *description){
+const char *permission_name(const App &app){
+    return tr(app.yes?"完全访问权限":app.auto_edit?"帮我批准":"请求批准");
+}
+const char *reasoning_name(const char *effort){
+    if(!strcmp(effort,"none"))return tr("关闭");
+    if(!strcmp(effort,"minimal"))return tr("最低");
+    if(!strcmp(effort,"low"))return tr("低");
+    if(!strcmp(effort,"medium"))return tr("中");
+    if(!strcmp(effort,"high"))return tr("高");
+    if(!strcmp(effort,"xhigh"))return tr("极高");
+    if(!strcmp(effort,"max"))return tr("最大");
+    return tr("服务商默认（未指定）");
+}
+bool approval_required(const App &app,Operation operation){
+    return !app.yes&&!(app.auto_edit&&operation==Operation::FileEdit);
+}
+int approve(App *a,const char *description,Operation operation){
     if(interrupted)return 0;
     printf("\n%s\n",description);
-    if(a->yes)return 1;
+    if(!approval_required(*a,operation))return 1;
     if(a->task_events<0&&!isatty(STDIN_FILENO))return 0;
     task_event(*a,'a');
     char *v=input(a->task_events>=0?tr("等待你在任务菜单中确认此次操作。"):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消："),NULL,false);

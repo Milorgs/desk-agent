@@ -125,6 +125,12 @@ int config_valid(App *a,J *c){
         seterr(a,tr("密钥包含无效字符。"));
         return -1;
     }
+    J *reasoning=get(c,"reasoning_effort");
+    const char *effort=sget(c,"reasoning_effort");
+    bool supported=!*effort||!strcmp(effort,"none")||!strcmp(effort,"minimal")||!strcmp(effort,"low")||!strcmp(effort,"medium")||!strcmp(effort,"high")||!strcmp(effort,"xhigh")||!strcmp(effort,"max");
+    if((reasoning&&!json_object_is_type(reasoning,json_type_string))||!supported||(!strcmp(protocol,"anthropic")&&!strcmp(effort,"minimal"))){
+        seterr(a,tr("推理档位与接口不兼容，请重新选择或恢复服务商默认。"));return -1;
+    }
     int tokens=iget(c,"max_tokens",4096);
     if(tokens<1||tokens>65536){
         seterr(a,tr("max_tokens 必须为 1–65536。"));
@@ -282,7 +288,7 @@ int store_load(App *a){
     }
     return 0;
 }
-int save_config(App *a,J *c){
+int save_config(App *a,J *c,bool clear_session){
     if(config_valid(a,c))return -1;
     J *next=copy(a->store);
     put(next,"active_profile",str(sget(c,"profile")));
@@ -309,7 +315,7 @@ int save_config(App *a,J *c){
     json_object_put(a->config);
     a->config=selected;
     desktop_clear(a);
-    reset_session(a);
+    if(clear_session)reset_session(a);
     return 0;
 }
 int activate(App *a,const char *name){

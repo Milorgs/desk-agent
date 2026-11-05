@@ -208,7 +208,7 @@ static J *file_write(App *a,J *args,const char *preview){
         free(old);
         return err(tr("无法分配写入预览内存，原文件未修改。"));
     }
-    int allowed=approve(a,description);
+    int allowed=approve(a,description,Operation::FileEdit);
     free(description);
     if(!allowed){
         free(old);

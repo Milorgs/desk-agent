@@ -355,7 +355,7 @@ static void test_context_and_validation(void){
     json_object_put(data);
     app_cleanup(&a);
 }
-/* A local HTTP server; no external model or real credential. */ static pid_t fake_server(App *a,const char **responses,int count){
+/* A local HTTP server; no external model or real credential. */ static pid_t fake_server(App *a,const char **responses,int count,int http_status=200){
     int fd=socket(AF_INET,SOCK_STREAM,0);
     CHECK(fd>=0);
     struct sockaddr_in address{};
@@ -403,7 +403,7 @@ static void test_context_and_validation(void){
             const char *data=json_object_to_json_string(capture);
             if(atomic_file(path,data,strlen(data),0600))_exit(2);
             json_object_put(capture);
-            fprintf(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",strlen(responses[i]),responses[i]);
+            fprintf(stream,"HTTP/1.1 %d Test\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",http_status,strlen(responses[i]),responses[i]);
             fclose(stream);
         }
         close(fd);
@@ -897,7 +897,7 @@ static void test_numeric_request(void){
     }
     const char *keys="1\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
     std::string output;CHECK(terminal_until(master,output,"数字需求已收到"));
-    CHECK(write(master,"\n0\n",3)==3);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    CHECK(write(master,"0\n0\n",4)==4);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     server_done(server);JsonPtr request(capture(&a,0));J *messages=get(get(request.get(),"body"),"messages");
     CHECK(alen(messages)==1&&!strcmp(sget(at(messages,0),"role"),"user"));CHECK(!strcmp(sget(at(messages,0),"content"),"1"));
     CHECK(output.find("[y/N]")==std::string::npos&&output.find("/help")==std::string::npos);
@@ -907,17 +907,112 @@ static void test_numeric_settings(void){
     App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     const char *keys="5\n2\n1\n3\n2\n0\n6\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
-    std::string output;CHECK(terminal_until(master,output,"Desktop: On  Permissions: Auto-approve"));
+    std::string output;CHECK(terminal_until(master,output,"Desktop: On  Permissions: Approve file edits"));
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     CHECK(output.find("/desktop")==std::string::npos&&output.find("/permissions")==std::string::npos);
     char path[PATH_MAX];CHECK(!path_suffix(path,a.config_dir,"/settings.json"));CHECK(access(path,F_OK)!=0);
     app_cleanup(&a);
+}
+static void test_approval_modes(void){
+    App a=fresh();a.yes=false;
+    CHECK(approval_required(a,Operation::FileEdit));CHECK(approval_required(a));
+    a.auto_edit=true;CHECK(!approval_required(a,Operation::FileEdit));CHECK(approval_required(a));
+    JsonPtr write(args("automatic.txt"));put(write.get(),"content",str("first"));put(write.get(),"expected_sha256",nullptr);
+    JsonPtr result(tool_call(&a,"write_file",write.get()));CHECK(bget(result.get(),"verified"));
+    JsonPtr path(args("automatic.txt"));result.reset(tool_call(&a,"read_file",path.get()));std::string hash=sget(result.get(),"sha256");
+    put(path.get(),"old_text",str("first"));put(path.get(),"new_text",str("second"));put(path.get(),"expected_sha256",str(hash.c_str()));
+    result.reset(tool_call(&a,"edit_file",path.get()));CHECK(bget(result.get(),"verified"));
+    put(write.get(),"path",str("../outside.txt"));result.reset(tool_call(&a,"write_file",write.get()));CHECK(get(result.get(),"error"));
+    // A redirected foreground cannot approve commands or desktop actions in assisted mode.
+    int saved=dup(STDIN_FILENO),null=open("/dev/null",O_RDONLY);CHECK(saved>=0&&null>=0);CHECK(dup2(null,STDIN_FILENO)>=0);close(null);
+    JsonPtr cmd(command("touch forbidden.txt"));result.reset(tool_call(&a,"run_shell",cmd.get()));CHECK(bget(result.get(),"denied"));
+    a.desktop=true;JsonPtr desktop(obj());put(desktop.get(),"ref",str("invalid"));put(desktop.get(),"action",str("invoke"));result.reset(tool_call(&a,"desktop_action",desktop.get()));CHECK(bget(result.get(),"denied"));
+    CHECK(dup2(saved,STDIN_FILENO)>=0);close(saved);
+    a.yes=true;CHECK(!approval_required(a));CHECK(!approval_required(a,Operation::FileEdit));
+    CHECK(set_language("en"));CHECK(!strcmp(permission_name(a),"Full access"));a.yes=false;CHECK(!strcmp(permission_name(a),"Approve file edits"));a.auto_edit=false;CHECK(!strcmp(permission_name(a),"Ask for approval"));CHECK(set_language("zh"));
+    app_cleanup(&a);
+}
+static void test_reasoning_modes(void){
+    for(bool native:{false,true}){
+        App a=fresh();json_object_put(a.config);a.config=config("reasoning",native?"anthropic":"openai");
+        J *user=obj();put(user,"role",str("user"));put(user,"content",str("Keep this exact request."));add(a.messages,user);
+        const char *openai[]={"none","minimal","low","medium","high","xhigh"};
+        const char *anthropic[]={"none","low","medium","high","xhigh","max"};const char **levels=native?anthropic:openai;
+        std::string reply=native?"{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"unchanged\"}]}":model_reply(nullptr,"unchanged");
+        std::vector<const char *> responses(8,reply.c_str());pid_t server=fake_server(&a,responses.data(),static_cast<int>(responses.size()));
+        std::string before=json_object_to_json_string_ext(a.messages,JSON_C_TO_STRING_PLAIN),model=sget(a.config,"model");int tokens=iget(a.config,"max_tokens",4096);
+        for(int i=0;i<8;i++){
+            JsonPtr candidate(copy(a.config));if(i==0||i==7)json_object_object_del(candidate.get(),"reasoning_effort");else put(candidate.get(),"reasoning_effort",str(levels[i-1]));
+            CHECK(!save_config(&a,candidate.get(),false));CHECK(before==json_object_to_json_string_ext(a.messages,JSON_C_TO_STRING_PLAIN));CHECK(model==sget(a.config,"model"));CHECK(tokens==iget(a.config,"max_tokens",4096));
+            App reload;CHECK(!store_load(&reload));CHECK(!strcmp(sget(reload.config,"reasoning_effort"),sget(a.config,"reasoning_effort")));app_cleanup(&reload);
+            JsonPtr result(api_complete(&a,a.config,a.messages,nullptr));CHECK(result);CHECK(!strcmp(sget(result.get(),"content"),"unchanged"));
+            JsonPtr request(capture(&a,i));J *body=get(request.get(),"body");CHECK(!get(body,"system"));CHECK(model==sget(body,"model"));CHECK(alen(get(body,"messages"))==1);
+            if(i==0||i==7){CHECK(!get(body,"reasoning_effort"));CHECK(!get(body,"thinking"));CHECK(!get(body,"output_config"));}
+            else if(!native)CHECK(!strcmp(sget(body,"reasoning_effort"),levels[i-1]));
+            else if(i==1){CHECK(!strcmp(sget(get(body,"thinking"),"type"),"disabled"));CHECK(!get(body,"output_config"));}
+            else{CHECK(!strcmp(sget(get(body,"thinking"),"type"),"adaptive"));CHECK(!strcmp(sget(get(body,"output_config"),"effort"),levels[i-1]));CHECK(iget(body,"max_tokens",0)==tokens);}
+        }
+        server_done(server);
+        put(a.config,"reasoning_effort",str("xhigh"));const char *rejected[]={"{\"error\":{\"message\":\"unsupported effort\"}}"};server=fake_server(&a,rejected,1,400);
+        JsonPtr failure(api_complete(&a,a.config,a.messages,nullptr));CHECK(!failure);CHECK(strstr(a.error,"400"));CHECK(strstr(a.error,"推理"));CHECK(!strcmp(sget(a.config,"reasoning_effort"),"xhigh"));CHECK(model==sget(a.config,"model"));CHECK(before==json_object_to_json_string_ext(a.messages,JSON_C_TO_STRING_PLAIN));server_done(server);
+        put(a.config,"reasoning_effort",str("invalid"));CHECK(config_valid(&a,a.config));put(a.config,"reasoning_effort",json_object_new_int(5));CHECK(config_valid(&a,a.config));
+        put(a.config,"reasoning_effort",str("minimal"));CHECK(native?config_valid(&a,a.config)!=0:config_valid(&a,a.config)==0);
+        app_cleanup(&a);
+    }
+}
+static void test_assisted_worker(void){
+    App a=fresh();json_object_put(a.config);a.config=config("assisted","openai");a.yes=false;a.auto_edit=true;put(a.config,"reasoning_effort",str("high"));
+    J *write=args("assisted.txt");put(write,"content",str("auto-approved"));put(write,"expected_sha256",nullptr);
+    std::string first=model_tool("write","write_file",write),second=model_tool("run","run_shell",command("touch command-must-wait.txt"));const char *responses[]={first.c_str(),second.c_str()};pid_t server=fake_server(&a,responses,2);
+    {
+        Tasks jobs("./build/desk");int id=jobs.start(a,"edit then ask for command approval");CHECK(id==1);
+        a.auto_edit=false;a.yes=true;put(a.config,"reasoning_effort",str("low"));
+        CHECK(await_state(jobs,id,"等待确认"));char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/assisted.txt"));char *content=read_bytes(path,100,nullptr);CHECK(content&&!strcmp(content,"auto-approved"));free(content);
+        CHECK(!path_suffix(path,a.root,"/command-must-wait.txt"));CHECK(access(path,F_OK)!=0);
+        JsonPtr request(capture(&a,1));CHECK(!strcmp(sget(get(request.get(),"body"),"reasoning_effort"),"high"));
+        CHECK(jobs.cancel(id));CHECK(await_state(jobs,id,"已取消"));CHECK(access(path,F_OK)!=0);
+    }
+    server_done(server);app_cleanup(&a);
+}
+static void test_chat_mode_menu(void){
+    App a=fresh();json_object_put(a.config);a.config=config("modes","openai");CHECK(!save_config(&a,a.config));
+    int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    const char *keys="1\n/\n6\n5\n/\n7\n2\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));std::string output;
+    CHECK(terminal_until(master,output,"Reasoning: High · Approval: Approve file edits"));CHECK(output.find("[6] Extra high (xhigh)")!=std::string::npos);CHECK(output.find("[3] Full access")!=std::string::npos);CHECK(output.find("[1] Enter a request")==std::string::npos);
+    const char *reset="/\n6\n7\n/\n7\n3\n";CHECK(write(master,reset,strlen(reset))==static_cast<ssize_t>(strlen(reset)));CHECK(terminal_until(master,output,"Reasoning: Provider default (unspecified) · Approval: Full access"));
+    const char *ask="/\n7\n1\n";CHECK(write(master,ask,strlen(ask))==static_cast<ssize_t>(strlen(ask)));CHECK(terminal_until(master,output,"Reasoning: Provider default (unspecified) · Approval: Ask for approval"));
+    CHECK(write(master,"\n0\n",3)==3);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    app_cleanup(&a);
+}
+static void test_chat_exit_paths(void){
+    for(int route=0;route<4;route++){
+        App a=fresh();json_object_put(a.config);a.config=config("exit","openai");put(a.config,"base_url",str("http://127.0.0.1:1/v1"));CHECK(!save_config(&a,a.config));
+        int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+        if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+        CHECK(write(master,"1\n",2)==2);std::string output;
+        CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));output.clear();
+        if(route==0)CHECK(write(master,"0\n",2)==2);
+        else if(route==1)CHECK(write(master,"\n",1)==1);
+        else if(route==2)CHECK(write(master,"\x04",1)==1);
+        else CHECK(kill(child,SIGINT)==0);
+        if(route!=2){CHECK(terminal_until(master,output,"[1] Start chat"));CHECK(write(master,"0\n",2)==2);}
+        int status=0;pid_t ended=0;double until=monotime()+5;
+        while(monotime()<until&&(ended=waitpid(child,&status,WNOHANG))==0)usleep(10000);
+        if(!ended){kill(child,SIGKILL);waitpid(child,&status,0);}
+        close(master);CHECK(ended==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);CHECK(output.find("Requesting model")==std::string::npos);app_cleanup(&a);
+    }
 }
 int main(void){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     char directory[]="/tmp/desk-c-test-XXXXXX";
     CHECK(mkdtemp(directory));
     strcpy(sandbox,directory);
+    test_approval_modes();
+    test_reasoning_modes();
+    test_assisted_worker();
+    test_chat_mode_menu();
+    test_chat_exit_paths();
     test_utf8();
     test_files();
     test_search_and_edit();
