@@ -404,7 +404,8 @@ static int menu(App *a){
         else{
             size_t index=1;
             json_object_object_foreach(profiles,name,profile){
-                printf("    %zu. %s / %s",index++,name,sget(profile,"model"));
+                (void)name;
+                printf("    %zu. %s",index++,sget(profile,"model"));
                 if(usage)printf(" · %llu Token",static_cast<unsigned long long>(model_tokens(usage.get(),profile)));
                 putchar('\n');
             }

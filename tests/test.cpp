@@ -1159,7 +1159,7 @@ static void test_conversation_picker(void){
     std::string output;
     CHECK(terminal_until(master,output,"Lifetime tokens (reported by API): 0"));
     CHECK(output.find("Imported models")!=std::string::npos);
-    CHECK(output.find("alternate / alternate-model")!=std::string::npos);
+    CHECK(output.find("2. alternate-model · 0 Token")!=std::string::npos);
     CHECK(output.find("Current model: conversation-picker / model-test")!=std::string::npos);
     type_terminal(master,output,"1\n1\n"+first+"\n");CHECK(terminal_until(master,output,"REPLY_ONE"));wait_for_chat_prompt(master,output,"REPLY_ONE");
     CHECK(write(master,"\x04",1)==1);output.clear();
@@ -1199,8 +1199,8 @@ static void test_conversation_picker(void){
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     output.clear();
     CHECK(terminal_until(master,output,"Lifetime tokens (reported by API):"));
-    CHECK(output.find("1. alternate / alternate-model · 18 Token")!=std::string::npos);
-    CHECK(output.find("2. conversation-picker / model-test · 12 Token")!=std::string::npos);
+    CHECK(output.find("1. alternate-model · 18 Token")!=std::string::npos);
+    CHECK(output.find("2. model-test · 12 Token")!=std::string::npos);
     CHECK(write(master,"1\n",2)==2);
     CHECK(terminal_until(master,output,"Choose a conversation (this run only)"));
     auto tail=output.substr(output.find("Choose a conversation (this run only)"));
