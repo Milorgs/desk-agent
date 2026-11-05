@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <openssl/evp.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -406,6 +407,11 @@ J *tool_call(App *a,const char *name,J *args){
     }
     json_object_put(defs);
     if(!valid)return err("工具参数缺失、多余或类型不正确。");
+    std::unique_ptr<ResourceLock> lock;
+    if(!strcmp(name,"write_file")||!strcmp(name,"edit_file")||!strcmp(name,"run_shell")){
+        lock=std::make_unique<ResourceLock>(*a,false);
+        if(!lock->acquired()||interrupted)return err(interrupted?"资源等待已取消。":"工作目录被占用或无法加锁，未执行操作；请先 /switch 处理等待确认的任务，或使用 /task。");
+    }
     if(!strcmp(name,"list_files"))return file_list(a,sget(args,"path"));
     if(!strcmp(name,"read_file"))return file_read(a,sget(args,"path"));
     if(!strcmp(name,"search_text"))return file_search(a,args);

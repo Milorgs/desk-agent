@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <curl/curl.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -690,6 +691,140 @@ static void test_menu(void){
     CHECK(!strstr(output,"API Key"));
     app_cleanup(&a);
 }
+static std::string task_state(Tasks &jobs,int id){
+    JsonPtr list(jobs.snapshot());
+    for(size_t i=0;i<alen(list.get());i++)if(iget(at(list.get(),i),"id",0)==id)return sget(at(list.get(),i),"state");
+    return "missing";
+}
+static bool await_state(Tasks &jobs,int id,const std::string &state,double seconds=6){
+    double until=monotime()+seconds;
+    while(monotime()<until){if(task_state(jobs,id)==state)return true;usleep(10000);}
+    return false;
+}
+/* The server replies only AFTER both requests arrive: serial execution deadlocks. */
+static pid_t parallel_server(App &a){
+    int fd=socket(AF_INET,SOCK_STREAM,0);CHECK(fd>=0);
+    sockaddr_in address{};address.sin_family=AF_INET;address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    CHECK(!bind(fd,reinterpret_cast<sockaddr *>(&address),sizeof address));
+    socklen_t length=sizeof address;CHECK(!getsockname(fd,reinterpret_cast<sockaddr *>(&address),&length));CHECK(!listen(fd,4));
+    put(a.config,"base_url",str(("http://127.0.0.1:"+std::to_string(ntohs(address.sin_port))+"/v1").c_str()));
+    pid_t child=fork();CHECK(child>=0);
+    if(!child){
+        alarm(10);FILE *streams[2]{};std::string bodies[2];
+        for(int i=0;i<2;i++){
+            int client=accept(fd,nullptr,nullptr);if(client<0)_exit(2);
+            streams[i]=fdopen(client,"r+");if(!streams[i])_exit(2);
+            char *line=nullptr;size_t cap=0;long size=0;
+            while(getline(&line,&cap,streams[i])>0&&strcmp(line,"\r\n"))if(!strncasecmp(line,"Content-Length:",15))size=strtol(line+15,nullptr,10);
+            free(line);if(size<0||size>500000)_exit(2);
+            bodies[i].resize(static_cast<size_t>(size));if(fread(bodies[i].data(),1,bodies[i].size(),streams[i])!=bodies[i].size())_exit(2);
+        }
+        if(bodies[0].find("alpha")!=std::string::npos&&bodies[0].find("beta")!=std::string::npos)_exit(3);
+        if(bodies[1].find("alpha")!=std::string::npos&&bodies[1].find("beta")!=std::string::npos)_exit(3);
+        std::string reply=model_reply(nullptr,"独立任务完成");
+        for(FILE *stream:streams){fprintf(stream,"HTTP/1.1 200 OK\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",reply.size(),reply.c_str());fclose(stream);}
+        int client=accept(fd,nullptr,nullptr);if(client<0)_exit(2);
+        FILE *stream=fdopen(client,"r+");if(!stream)_exit(2);
+        char *line=nullptr;size_t cap=0;long size=0;
+        while(getline(&line,&cap,stream)>0&&strcmp(line,"\r\n"))if(!strncasecmp(line,"Content-Length:",15))size=strtol(line+15,nullptr,10);
+        free(line);if(size<0||size>500000)_exit(2);
+        std::string continued(static_cast<size_t>(size),'\0');if(fread(continued.data(),1,continued.size(),stream)!=continued.size())_exit(2);
+        if(continued.find("alpha")==std::string::npos||continued.find("followup")==std::string::npos||continued.find("beta")!=std::string::npos)_exit(3);
+        fprintf(stream,"HTTP/1.1 200 OK\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",reply.size(),reply.c_str());fclose(stream);
+        close(fd);_exit(0);
+    }
+    close(fd);return child;
+}
+static void test_parallel_tasks(void){
+    App a=fresh();json_object_put(a.config);a.config=config("parallel","openai");
+    pid_t server=parallel_server(a);
+    {
+        Tasks jobs("./build/desk");
+        int first=jobs.start(a,"alpha 独立任务"),second=jobs.start(a,"beta 独立任务");
+        CHECK(first==1&&second==2);
+        CHECK(await_state(jobs,first,"已完成"));CHECK(await_state(jobs,second,"已完成"));
+        CHECK(!jobs.cancel(first));CHECK(alen(a.messages)==1);
+        CHECK(jobs.resume(first,"followup 继续原任务"));CHECK(!jobs.resume(first,"任务仍在执行"));
+        CHECK(await_state(jobs,first,"已完成"));
+    }
+    server_done(server);app_cleanup(&a);
+    a=fresh();json_object_put(a.config);a.config=config("approval","openai");a.yes=false;
+    J *write=args("pending.txt");put(write,"content",str("approved only"));put(write,"expected_sha256",nullptr);
+    std::string response=model_tool("write","write_file",write);const char *responses[]={response.c_str()};
+    server=fake_server(&a,responses,1);
+    {
+        Tasks jobs("./build/desk");int id=jobs.start(a,"等待确认，禁止自动写入");CHECK(id==1);
+        CHECK(await_state(jobs,id,"等待确认"));
+        char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/pending.txt"));CHECK(access(path,F_OK)!=0);
+        CHECK(jobs.cancel(id));CHECK(await_state(jobs,id,"已取消"));CHECK(access(path,F_OK)!=0);
+    }
+    server_done(server);app_cleanup(&a);
+    a=fresh();json_object_put(a.config);a.config=config("cancel","openai");
+    response=model_tool("run","run_shell",command("echo $$ > child.pid; sleep 30"));responses[0]=response.c_str();
+    server=fake_server(&a,responses,1);
+    {
+        Tasks jobs("./build/desk");int id=jobs.start(a,"长命令取消测试");CHECK(id==1);
+        char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/child.pid"));
+        double until=monotime()+5;while(access(path,F_OK)&&monotime()<until){jobs.refresh();usleep(10000);}
+        char *pid_text=read_bytes(path,100,nullptr);CHECK(pid_text);pid_t pid=static_cast<pid_t>(strtol(pid_text,nullptr,10));free(pid_text);
+        CHECK(jobs.cancel(id));CHECK(await_state(jobs,id,"已取消"));
+        until=monotime()+2;while(alive(pid)&&monotime()<until)usleep(10000);CHECK(!alive(pid));
+    }
+    server_done(server);app_cleanup(&a);
+}
+static void test_parallel_resources(void){
+    App a=fresh();json_object_put(a.config);a.config=config("locks","openai");
+    char other[PATH_MAX];CHECK(!path_suffix(other,a.root,"/other"));CHECK(!mkdirs(other,0700));
+    J *write=args("result.txt");put(write,"content",str("independent"));put(write,"expected_sha256",nullptr);
+    std::string action=model_tool("write","write_file",write),done=model_reply(nullptr,"已核对");
+    const char *responses[]={action.c_str(),action.c_str(),done.c_str()};pid_t server=fake_server(&a,responses,3);
+    {
+        ResourceLock held(a,false);CHECK(held.acquired());
+        double start=monotime();{ResourceLock blocked(a,false);CHECK(!blocked.acquired());}CHECK(monotime()-start<1);
+        Tasks jobs("./build/desk");int first=jobs.start(a,"等待同目录锁");CHECK(first==1);
+        CHECK(await_state(jobs,first,"等待资源"));
+        int second=jobs.start(a,"在另一个目录工作",other);CHECK(second==2);
+        CHECK(await_state(jobs,second,"已完成"));CHECK(task_state(jobs,first)=="等待资源");
+        CHECK(jobs.cancel(first));CHECK(await_state(jobs,first,"已取消"));
+        char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/result.txt"));CHECK(access(path,F_OK)!=0);
+        CHECK(!path_suffix(path,other,"/result.txt"));char *text=read_bytes(path,100,nullptr);CHECK(text&&!strcmp(text,"independent"));free(text);
+    }
+    server_done(server);app_cleanup(&a);
+}
+static bool terminal_until(int fd,std::string &output,const char *needle){
+    double until=monotime()+8;
+    while(monotime()<until){
+        if(output.find(needle)!=std::string::npos)return true;
+        pollfd p{fd,POLLIN,0};if(poll(&p,1,100)<=0)continue;
+        char buffer[4096];ssize_t n=read(fd,buffer,sizeof buffer);if(n<=0)break;
+        output.append(buffer,static_cast<size_t>(n));
+    }
+    fprintf(stderr,"Terminal transcript:\n%s\n",output.c_str());return false;
+}
+static void test_task_switch_approval(void){
+    App a=fresh();json_object_put(a.config);a.config=config("switch","openai");
+    J *write=args("confirmed.txt");put(write,"content",str("user approved"));put(write,"expected_sha256",nullptr);
+    std::string action=model_tool("write","write_file",write),done=model_reply(nullptr,"已核对");
+    const char *responses[]={action.c_str(),done.c_str()};pid_t server=fake_server(&a,responses,2);
+    int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    if(!child){
+        setenv("DESK_BASE_URL",sget(a.config,"base_url"),1);setenv("DESK_MODEL","model-test",1);setenv("DESK_API_KEY","fake-test-key",1);setenv("DESK_API_TYPE","openai",1);
+        execl("./build/desk","desk","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
+    }
+    std::string output;
+    const char *keys="1\n/task 创建文件\n/switch 1\n";CHECK(::write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    CHECK(terminal_until(master,output,"允许？[y/N]"));
+    char path[PATH_MAX];CHECK(!path_suffix(path,a.root,"/confirmed.txt"));CHECK(access(path,F_OK)!=0);
+    CHECK(::write(master,"y\n",2)==2);CHECK(terminal_until(master,output,"任务 [1]：已完成"));
+    CHECK(::write(master,"/exit\n",6)==6);
+    int status=0;double until=monotime()+5;pid_t ended=0;
+    while(monotime()<until&&(ended=waitpid(child,&status,WNOHANG))==0)usleep(10000);
+    if(!ended){kill(child,SIGKILL);waitpid(child,&status,0);}
+    CHECK(ended==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);close(master);
+    char *text=read_bytes(path,100,nullptr);CHECK(text&&!strcmp(text,"user approved"));free(text);
+    CHECK(output.find("fake-test-key")==std::string::npos);
+    server_done(server);app_cleanup(&a);
+}
 int main(void){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     char directory[]="/tmp/desk-c-test-XXXXXX";
@@ -709,7 +844,10 @@ int main(void){
     test_recovery_and_loops();
     test_native_error_flags();
     test_menu();
+    test_parallel_tasks();
+    test_parallel_resources();
+    test_task_switch_approval();
     curl_global_cleanup();
-    printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu integration.\n",checks);
+    printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu/parallel/resume/approval/locks integration.\n",checks);
     return 0;
 }

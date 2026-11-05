@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -218,6 +219,11 @@ static void show_result(const char *name,J *r,double elapsed){
     }
 }
 int run_task(App *a,const char *task){
+    std::unique_ptr<ResourceLock> desktop_lock;
+    if(a->desktop){
+        desktop_lock=std::make_unique<ResourceLock>(*a,true);
+        if(!desktop_lock->acquired()){seterr(a,"桌面资源等待已取消、被占用或无法加锁；请先 /switch 处理已有任务，或使用 /task。");a->state=interrupted?"已取消":"失败";return -1;}
+    }
     if(!a->messages)reset_session(a);
     J *user=obj();
     put(user,"role",str("user"));

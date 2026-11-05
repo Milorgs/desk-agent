@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -173,11 +174,13 @@ static void show_models(App *a){
     json_object_put(models);
 }
 static int chat(App *a){
+    Tasks jobs;
+    puts("并行任务：/task 描述 · /tasks 列表 · /switch 编号 · /cancel 编号。返回菜单或退出会停止仍在运行的并行任务。");
     status(a);
     puts("\n输入需求；/menu 返回菜单，/help 查看帮助，/exit 退出。任务及工具结果会发送到配置的 API。");
     for(;;){
         interrupted=0;
-        char *task=input("\n› ",NULL,false);
+        char *task=jobs.readline();
         if(!task){
             if(interrupted==SIGINT){
                 puts("\n已取消，可以继续输入。");
@@ -197,7 +200,30 @@ static int chat(App *a){
             free(task);
             return 1;
         }
-        if(!strcmp(task,"/help"))puts("/menu 主菜单\n/new 新对话\n/status 状态\n/config 修改配置\n/provider 列出配置\n/provider 名称 切换\n/provider add 名称 添加\n/model 列出模型\n/model 名称 切换模型\n/test 连接测试\n/desktop on|off 桌面工具\n/permissions ask|auto 操作确认\n/exit 退出");
+        if(!strncmp(task,"/task ",6)||!strncmp(task,"/task-at ",9)){
+            std::string description,workspace;
+            if(!strncmp(task,"/task-at ",9)){
+                std::string value=task+9;auto split=value.find(" | ");
+                if(split==std::string::npos){puts("用法：/task-at 工作目录 | 任务描述");free(task);continue;}
+                workspace=value.substr(0,split);description=value.substr(split+3);
+            }else description=task+6;
+            int id=jobs.start(*a,description,workspace);
+            if(id<0)fprintf(stderr,"%s\n",a->error);
+            else printf("已启动任务 [%d]，可继续添加任务；/switch %d 查看与确认操作。\n",id,id);
+        }
+        else if(!strncmp(task,"/resume ",8)){
+            char *end=nullptr;long id=strtol(task+8,&end,10);
+            if(end==task+8||*end!=' '||id<1||id>2147483647||!jobs.resume(static_cast<int>(id),end+1))puts("无法继续：请输入已结束的任务编号和新需求，或先等待其他任务释放名额。");
+            else puts("已继续该任务，保留原模型和对话。");
+        }
+        else if(!strcmp(task,"/tasks"))jobs.list();
+        else if(!strncmp(task,"/switch ",8)||!strncmp(task,"/cancel ",8)){
+            char *end=nullptr;long id=strtol(task+8,&end,10);
+            if(*end||id<1||id>2147483647)puts("请输入有效任务编号。");
+            else if(!strncmp(task,"/switch ",8))jobs.attach(static_cast<int>(id));
+            else puts(jobs.cancel(static_cast<int>(id))?"已请求停止该任务。":"任务不存在或已经结束。");
+        }
+        else if(!strcmp(task,"/help"))puts("/task 描述 新建并行任务\n/task-at 目录 | 描述 在指定目录新建\n/resume 编号 新需求 继续已有任务\n/tasks 任务列表\n/switch 编号 查看与确认（Ctrl+] 返回）\n/cancel 编号 停止单个任务\n/menu 主菜单\n/new 新对话\n/status 状态\n/config 修改配置\n/provider 列出配置\n/provider 名称 切换\n/provider add 名称 添加\n/model 列出模型\n/model 名称 切换模型\n/test 连接测试\n/desktop on|off 桌面工具\n/permissions ask|auto 操作确认\n/exit 退出");
         else if(!strcmp(task,"/new")){
             reset_session(a);
             puts("已开始新对话。");
@@ -299,6 +325,11 @@ static int run_cli(int argc,char **argv){
     sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL);
     sigaction(SIGTERM,&action,NULL);
+    signal(SIGPIPE,SIG_IGN);
+    if(argc==3&&!strcmp(argv[1],"--task-worker")){
+        char *end=nullptr;long fd=strtol(argv[2],&end,10);
+        return *end||fd<3||fd>1048576?2:task_worker(static_cast<int>(fd));
+    }
     App a={
         .yes=false,.shell=true,.desktop=false,.record=false,.max_steps=20,.state="等待任务"
     };

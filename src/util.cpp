@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <sys/stat.h>
 #include <sys/random.h>
 #include <unistd.h>
@@ -197,10 +198,13 @@ char *input(const char *prompt,const char *fallback,bool secret){
     return line;
 }
 int approve(App *a,const char *description){
+    if(interrupted)return 0;
     printf("\n%s\n",description);
     if(a->yes)return 1;
     if(!isatty(STDIN_FILENO))return 0;
+    task_event(*a,'a');
     char *v=input("允许？[y/N] ",NULL,false);
+    task_event(*a,'r');
     int yes=v&&(!strcmp(v,"y")||!strcmp(v,"Y"));
     free(v);
     return yes;

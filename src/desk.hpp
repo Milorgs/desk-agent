@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.1.1"
+#define VERSION "1.2.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -28,6 +28,7 @@ struct App {
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
     bool yes=false, shell=true, desktop=false, record=false;
     int max_steps=20;
+    int task_events=-1;
     const char *state="等待任务";
     void *desktop_data=nullptr;
 };
