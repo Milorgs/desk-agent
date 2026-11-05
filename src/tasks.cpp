@@ -133,7 +133,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     if(pipe2(events,O_CLOEXEC|O_NONBLOCK)){close(payload[0]);close(payload[1]);seterr(&app,tr("无法创建状态管道。"));return -1;}
     JsonPtr data(obj());
     put(data.get(),"language",str(language_code()));put(data.get(),"config",copy(app.config));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));
-    put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));
+    put(data.get(),"conversation",json_object_new_boolean(app.conversation_worker));put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));
     put(data.get(),"shell",json_object_new_boolean(app.shell));put(data.get(),"desktop",json_object_new_boolean(app.desktop));
     put(data.get(),"record",json_object_new_boolean(app.record));put(data.get(),"verbose",json_object_new_boolean(app.verbose));put(data.get(),"max_steps",json_object_new_int(app.max_steps));
     put(data.get(),"events",json_object_new_int(events[1]));
@@ -169,21 +169,26 @@ void Tasks::list(){
     for(const auto &j:impl->jobs)printf("[%d] %s · %.120s\n    %s\n",j.id,tr(j.state.c_str()),j.title.c_str(),j.workspace.c_str());
 }
 bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
-bool Tasks::resume(int id,const std::string &task){
+bool Tasks::resume(int id,const std::string &task,J *settings){
     refresh();Job *j=impl->find(id);
     if(!j||j->active||!j->alive||task.empty()||task.size()>65536)return false;
     if(std::count_if(impl->jobs.begin(),impl->jobs.end(),[](const Job &job){return job.active;})>=4)return false;
-    JsonPtr message(obj());put(message.get(),"language",str(language_code()));put(message.get(),"task",str(task.c_str()));
-    std::string text=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);text+='\n';
+    JsonPtr message(obj());if(settings)put(message.get(),"settings",copy(settings));put(message.get(),"language",str(language_code()));put(message.get(),"task",str(task.c_str()));
+    std::string text=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);if(text.size()>250000)return false;text+='\n';
     if(!write_all(j->feed,text))return false;
     j->active=true;j->cancelled=false;j->state="执行中";j->title=task;
     return true;
 }
 char *Tasks::readline(const char *prompt){
-    return editable_input(prompt,nullptr,false,[this]{refresh();});
+    return editable_input(prompt,nullptr,false,[this]{refresh();if(on_idle)on_idle();});
 }
 std::string Tasks::output(int id,bool *truncated){refresh();Job *j=impl->find(id);if(!j)return {};if(truncated)*truncated=j->truncated;return j->output;}
 bool Tasks::decide(int id,bool allow){refresh();Job *j=impl->find(id);return j&&j->active&&j->state=="等待确认"&&write_all(j->master,allow?"1\n":"2\n");}
+bool Tasks::respond(int id,int answer){
+    refresh();Job *j=impl->find(id);
+    if(!j||!j->active||j->state!="等待确认"||answer<0||answer>3)return false;
+    return write_all(j->master,std::to_string(answer)+"\n");
+}
 int task_worker(std::intptr_t fd){
     FILE *control=fdopen(fd,"r");if(!control)return 1;
     fcntl(fd,F_SETFD,FD_CLOEXEC);
@@ -196,7 +201,7 @@ int task_worker(std::intptr_t fd){
     JsonPtr data=read_message();if(!data)return 1;
     set_language(sget(data.get(),"language"));
     App app;
-    app.config=copy(get(data.get(),"config"));
+    app.conversation_worker=bget(data.get(),"conversation");app.config=copy(get(data.get(),"config"));
     snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));
     snprintf(app.config_dir,sizeof app.config_dir,"%s",sget(data.get(),"config_dir"));
     app.yes=bget(data.get(),"yes");app.auto_edit=bget(data.get(),"auto_edit");app.shell=bget(data.get(),"shell");app.desktop=bget(data.get(),"desktop");app.record=bget(data.get(),"record");app.verbose=bget(data.get(),"verbose");
@@ -215,7 +220,7 @@ int task_worker(std::intptr_t fd){
         if(interrupted==SIGTERM)break;
         interrupted=0;
         JsonPtr next=read_message();if(!next||interrupted)break;
-        set_language(sget(next.get(),"language"));
+        apply_conversation_settings(app,get(next.get(),"settings"));set_language(sget(next.get(),"language"));
         task=sget(next.get(),"task");if(task.empty())break;
     }
     return 0;

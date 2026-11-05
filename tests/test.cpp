@@ -1207,6 +1207,52 @@ static void test_conversation_picker(void){
     CHECK(write(master,"\x04",1)==1);CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     app_cleanup(&a);
 }
+
+static void test_background_conversations(){
+    App a=fresh();json_object_put(a.config);a.config=config("background-conversations","openai");
+    const std::string first=model_reply(nullptr,"FIRST_DONE"),second=model_reply(nullptr,"SECOND_DONE"),follow=model_reply(nullptr,"FOLLOW_DONE");
+    const char *responses[]={first.c_str(),second.c_str(),follow.c_str()};
+    pid_t server=fake_server(&a,responses,3,200,1000);CHECK(!save_config(&a,a.config));
+    int master=-1;struct winsize window{24,80,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){
+        setenv("TERM","xterm-256color",1);
+        execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
+    }
+    std::string output;
+    CHECK(terminal_until(master,output,"[1] Start chat"));
+    CHECK(output.find("Conversation activity")==std::string::npos);
+    type_terminal(master,output,"1\n1\nFirst conversation\n");
+    CHECK(terminal_until(master,output,"Thinking..."));
+    CHECK(terminal_until(master,output,"Running · First conversation"));
+    output.clear();CHECK(write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"[2] New conversation"));
+    output.clear();type_terminal(master,output,"2\nSecond conversation\n");
+    CHECK(terminal_until(master,output,"Running · First conversation"));
+    CHECK(terminal_until(master,output,"Running · Second conversation"));
+    CHECK(terminal_until(master,output,"SECOND_DONE"));
+    CHECK(output.find("FIRST_DONE")==std::string::npos);
+    output.clear();CHECK(write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"2. First conversation"));
+    type_terminal(master,output,"2\n");
+    CHECK(terminal_until(master,output,"FIRST_DONE"));
+    type_terminal(master,output,"Continue first\n");
+    CHECK(terminal_until(master,output,"FOLLOW_DONE"));
+    output.clear();CHECK(write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"[6] Main menu"));
+    output.clear();type_terminal(master,output,"6\n");
+    CHECK(terminal_until(master,output,"[1] Start chat"));
+    CHECK(output.find("\033[?1049l")!=std::string::npos);
+    CHECK(output.find("Conversation activity")==std::string::npos);
+    CHECK(write(master,"0\n",2)==2);
+    int status=0;CHECK(waitpid(child,&status,0)==child);close(master);
+    CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);
+    for(int i=0;i<3;i++){
+        JsonPtr request(capture(&a,i));J *messages=get(get(request.get(),"body"),"messages");
+        CHECK(alen(messages)==(i==2?3u:1u));
+        CHECK(!strcmp(sget(at(messages,0),"content"),i==1?"Second conversation":"First conversation"));
+    }
+    app_cleanup(&a);
+}
 int main(void){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     char directory[]="/tmp/desk-c-test-XXXXXX";
@@ -1223,6 +1269,7 @@ int main(void){
     test_line_editing();
     test_queued_editing();
     test_conversation_picker();
+    test_background_conversations();
     test_utf8();
     test_files();
     test_search_and_edit();

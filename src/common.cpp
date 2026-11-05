@@ -149,7 +149,7 @@ int approve(App *a,const char *description,Operation operation){
     if(interrupted)return 0;
     if(!approval_required(*a,operation)){if(a->verbose)printf("\n%s\n",description);return 1;}
     progress_clear(a);
-    bool compact=!a->verbose&&a->task_events<0;
+    bool compact=!a->verbose&&(a->task_events<0||a->conversation_worker);
     if(compact){
         size_t count=strcspn(description,"\n");if(count>300)count=300;
         while(count&&(static_cast<unsigned char>(description[count])&0xc0)==0x80)count--;
@@ -159,7 +159,7 @@ int approve(App *a,const char *description,Operation operation){
     task_event(*a,'a');
     bool yes=false;
     for(;;){
-        const char *prompt=a->task_events>=0?tr("等待你在任务菜单中确认此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
+        const char *prompt=a->task_events>=0&&!a->conversation_worker?tr("等待你在任务菜单中确认此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
         char *value=input(prompt,nullptr,false);
         if(value&&compact&&!strcmp(value,"3")){free(value);printf("\n%s\n",description);continue;}
         yes=value&&!strcmp(value,"1");free(value);break;

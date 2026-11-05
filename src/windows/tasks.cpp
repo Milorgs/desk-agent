@@ -103,7 +103,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     if(!job->group||!win_pipe(payload_read,job->feed)||!win_pipe(approval_read,job->approval)||!win_pipe(job->logs,logs_write)||!win_pipe(job->events,events_write)){seterr(&app,tr("无法创建任务管道。"));return -1;}
     SECURITY_ATTRIBUTES attr{sizeof attr,nullptr,TRUE};job->cancellation.reset(CreateEventW(&attr,TRUE,FALSE,nullptr));if(!job->cancellation){seterr(&app,tr("无法创建状态管道。"));return -1;}
     for(HANDLE handle:{job->feed.get(),job->approval.get(),job->logs.get(),job->events.get()})SetHandleInformation(handle,HANDLE_FLAG_INHERIT,0);
-    JsonPtr data(obj());put(data.get(),"config",copy(app.config));put(data.get(),"language",str(language_code()));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));put(data.get(),"task",str(task.c_str()));
+    JsonPtr data(obj());put(data.get(),"config",copy(app.config));put(data.get(),"language",str(language_code()));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));put(data.get(),"conversation",json_object_new_boolean(app.conversation_worker));put(data.get(),"task",str(task.c_str()));
     put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));put(data.get(),"shell",json_object_new_boolean(app.shell));put(data.get(),"desktop",json_object_new_boolean(app.desktop));put(data.get(),"record",json_object_new_boolean(app.record));put(data.get(),"verbose",json_object_new_boolean(app.verbose));put(data.get(),"max_steps",json_object_new_int(app.max_steps));
     put(data.get(),"events",json_object_new_int64(reinterpret_cast<std::intptr_t>(events_write.get())));put(data.get(),"cancel",json_object_new_int64(reinterpret_cast<std::intptr_t>(job->cancellation.get())));
     std::string body=json_object_to_json_string_ext(data.get(),JSON_C_TO_STRING_PLAIN);body+='\n';if(body.size()>250000){seterr(&app,tr("任务配置过大。"));return -1;}
@@ -117,20 +117,25 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
 J *Tasks::snapshot(){refresh();J *items=arr();for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);J *entry=obj();put(entry,"id",json_object_new_int(job->id));put(entry,"active",json_object_new_boolean(job->active));put(entry,"task",str(job->title.c_str()));put(entry,"state",str(tr(job->state.c_str())));put(entry,"workspace",str(job->workspace.c_str()));add(items,entry);}return items;}
 void Tasks::list(){JsonPtr items(snapshot());if(!alen(items.get()))puts(tr("尚无任务，请选择 [1] 新建并行任务。"));for(size_t i=0;i<alen(items.get());i++){J *job=at(items.get(),i);printf("[%d] %s · %.120s\n    %s\n",iget(job,"id",0),sget(job,"state"),sget(job,"task"),sget(job,"workspace"));}}
 bool Tasks::cancel(int id){refresh();Job *job=impl->find(id);if(!job)return false;std::lock_guard lock(job->mutex);if(!job->active)return false;job->cancelled=true;job->state="正在停止";return SetEvent(job->cancellation.get())!=FALSE;}
-bool Tasks::resume(int id,const std::string &task){
+bool Tasks::resume(int id,const std::string &task,J *settings){
     refresh();if(task.empty()||task.size()>65536)return false;size_t active=0;for(auto &job:impl->jobs){std::lock_guard lock(job->mutex);if(job->active)active++;}if(active>=4)return false;
     Job *job=impl->find(id);if(!job)return false;std::lock_guard lock(job->mutex);if(job->active||!job->alive)return false;
-    JsonPtr message(obj());put(message.get(),"task",str(task.c_str()));put(message.get(),"language",str(language_code()));std::string bytes=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);bytes+='\n';
+    JsonPtr message(obj());if(settings)put(message.get(),"settings",copy(settings));put(message.get(),"task",str(task.c_str()));put(message.get(),"language",str(language_code()));std::string bytes=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);bytes+='\n';
     if(bytes.size()>250000)return false;ResetEvent(job->cancellation.get());
     if(!win_write(job->feed.get(),bytes))return false;job->active=true;job->cancelled=false;job->state="执行中";job->title=task;return true;
 }
 std::string Tasks::output(int id,bool *truncated){Job *job=impl->find(id);if(!job)return {};std::lock_guard lock(job->mutex);if(truncated)*truncated=job->truncated;return job->text;}
 bool Tasks::decide(int id,bool allow){Job *job=impl->find(id);if(!job)return false;std::lock_guard lock(job->mutex);return job->active&&job->state=="等待确认"&&win_write(job->approval.get(),allow?"1\n":"2\n");}
-char *Tasks::readline(const char *prompt){refresh();return input(prompt,nullptr,false);}
+char *Tasks::readline(const char *prompt){refresh();if(on_idle)on_idle();return input(prompt,nullptr,false);}
+bool Tasks::respond(int id,int answer){
+    Job *job=impl->find(id);if(!job||answer<0||answer>3)return false;
+    std::lock_guard lock(job->mutex);
+    return job->active&&job->state=="等待确认"&&win_write(job->approval.get(),std::to_string(answer)+"\n");
+}
 int task_worker(std::intptr_t raw){
     WinHandle control(reinterpret_cast<HANDLE>(raw));Lines source{control.get()};std::string line;if(!source.next(line))return 1;
     JsonPtr data(json_tokener_parse(line.c_str()));if(!data)return 1;set_language(sget(data.get(),"language"));
-    App app;app.config=copy(get(data.get(),"config"));snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));snprintf(app.config_dir,sizeof app.config_dir,"%s",sget(data.get(),"config_dir"));
+    App app;app.conversation_worker=bget(data.get(),"conversation");app.config=copy(get(data.get(),"config"));snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));snprintf(app.config_dir,sizeof app.config_dir,"%s",sget(data.get(),"config_dir"));
     app.yes=bget(data.get(),"yes");app.auto_edit=bget(data.get(),"auto_edit");app.shell=bget(data.get(),"shell");app.desktop=bget(data.get(),"desktop");app.record=bget(data.get(),"record");app.verbose=bget(data.get(),"verbose");app.max_steps=iget(data.get(),"max_steps",20);app.task_events=static_cast<std::intptr_t>(json_object_get_int64(get(data.get(),"events")));
     WinHandle events(reinterpret_cast<HANDLE>(app.task_events)),cancel(reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(json_object_get_int64(get(data.get(),"cancel")))));
     SetHandleInformation(control.get(),HANDLE_FLAG_INHERIT,0);SetHandleInformation(events.get(),HANDLE_FLAG_INHERIT,0);SetHandleInformation(cancel.get(),HANDLE_FLAG_INHERIT,0);
@@ -142,7 +147,7 @@ int task_worker(std::intptr_t raw){
         int rc=run_task(&app,task.c_str());{std::lock_guard lock(cancellation_guard);running=false;ResetEvent(cancel.get());}
         if(rc)fprintf(stderr,"%s\n",app.error);fflush(nullptr);desktop_clear(&app);
         task_event(app,interrupted||!strcmp(app.state,"已取消")?'c':rc?'f':'d');
-        if(!source.next(line))break;JsonPtr next(json_tokener_parse(line.c_str()));if(!next)break;set_language(sget(next.get(),"language"));task=sget(next.get(),"task");if(task.empty())break;
+        if(!source.next(line))break;JsonPtr next(json_tokener_parse(line.c_str()));if(!next)break;apply_conversation_settings(app,get(next.get(),"settings"));set_language(sget(next.get(),"language"));task=sget(next.get(),"task");if(task.empty())break;
     }
     watcher.request_stop();return 0;
 }

@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.5.17"
+#define VERSION "1.5.18"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -31,6 +31,8 @@ struct App {
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
     bool yes=false, auto_edit=false, shell=true, desktop=false, record=false, verbose=false, progress_visible=false;
     bool progress_animated=false;
+    bool conversation_worker=false;
+    size_t session_revision=0;
     std::string progress_text{};
     double progress_updated=0;
     int max_steps=20;
@@ -78,6 +80,7 @@ int mkdirs(const char *path,unsigned int mode);
 int atomic_file(const char *path,const void *data,size_t len,unsigned int mode);
 char *input(const char *prompt,const char *fallback,bool secret);
 #ifndef _WIN32
+void terminal_message(const std::string &text);
 char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle);
 #endif
 enum class Operation { Other, FileEdit };

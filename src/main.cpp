@@ -6,6 +6,8 @@
 #include <string.h>
 #ifndef _WIN32
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <wchar.h>
 #endif
 #include <locale.h>
 #include <algorithm>
@@ -273,6 +275,12 @@ static void task_menu(App *a,Tasks &jobs){
 struct Conversation {
     std::string title;
     JsonPtr messages,config;
+    int job=0;
+    bool reset_context=false;
+    std::string displayed{};
+    struct Request {std::string text;JsonPtr settings;};
+    std::vector<Request> queue{};
+
 };
 static std::string conversation_title(std::string_view source,bool automatic){
     if(!valid_utf8(source))return {};
@@ -296,6 +304,135 @@ static std::string conversation_title(std::string_view source,bool automatic){
     return title;
 }
 static const char *title_of(const Conversation &item){return item.title.empty()?tr("新对话"):item.title.c_str();}
+
+#ifndef _WIN32
+static void advance_conversations(Tasks &jobs,std::vector<Conversation> &items){
+    JsonPtr states(jobs.snapshot());
+    size_t active=0;
+    for(size_t i=0;i<alen(states.get());i++)if(bget(at(states.get(),i),"active"))active++;
+    for(auto &item:items){
+        if(item.queue.empty())continue;
+        J *state=nullptr;
+        for(size_t i=0;i<alen(states.get());i++)if(iget(at(states.get(),i),"id",0)==item.job)state=at(states.get(),i);
+        if(state&&(!strcmp(sget(state,"state"),tr("已取消"))||!strcmp(sget(state,"state"),tr("正在停止")))){
+            item.queue.clear();continue;
+        }
+        if(!state||bget(state,"active")||active>=4)continue;
+        auto &next=item.queue.front();
+        if(jobs.resume(item.job,next.text,next.settings.get())){
+            item.queue.erase(item.queue.begin());active++;
+        }else{
+            item.queue.clear();
+            terminal_message(std::string(title_of(item))+" · "+tr("无法继续此对话，请新建对话。")+"\n");
+        }
+    }
+}
+class ConversationScreen {
+    App &app;
+    Tasks &jobs;
+    std::vector<Conversation> &items;
+    std::function<void()> previous;
+    bool pinned=false;
+    int rows=0,columns=0;
+    std::string last_header;
+    double checked=0;
+    static std::string clipped(std::string_view text,int width){
+        std::string result;int cells=0;
+        while(!text.empty()){
+            auto first=static_cast<unsigned char>(text.front());
+            size_t size=first<0x80?1:first<0xe0?2:first<0xf0?3:4;
+            if(size>text.size())break;
+            wchar_t value=0;std::mbstate_t state{};
+            int count=std::mbrtowc(&value,text.data(),size,&state)==size?wcwidth(value):1;
+            if(count<0){text.remove_prefix(size);continue;}
+            if(cells+count>width-1){result+="…";break;}
+            result.append(text.substr(0,size));cells+=count;text.remove_prefix(size);
+        }
+        return result;
+    }
+public:
+    Conversation *current=nullptr;
+    ConversationScreen(App &a,Tasks &tasks,std::vector<Conversation> &list):app(a),jobs(tasks),items(list),previous(std::move(tasks.on_idle)){
+        struct winsize size{};
+        pinned=isatty(1)&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>=10&&size.ws_col>=40;
+        const char *term=env_value("TERM");
+        pinned=pinned&&term&&strcmp(term,"dumb");
+        if(pinned){rows=size.ws_row;columns=size.ws_col;printf("\033[?1049h\033[2J\033[6;%dr\033[6;1H",rows);}
+        jobs.on_idle=[this]{if(previous)previous();tick();};
+        tick();
+    }
+    ~ConversationScreen(){
+        jobs.on_idle=std::move(previous);
+        if(pinned)fputs("\033[r\033[?1049l",stdout);
+        fflush(stdout);
+    }
+    void tick(){
+        if(monotime()-checked<0.05)return;
+        checked=monotime();
+        JsonPtr states(jobs.snapshot());
+        std::string header=tr("对话运行状态");
+        int line=2;
+        for(auto &item:items){
+            J *state=nullptr;
+            for(size_t i=0;i<alen(states.get());i++)if(iget(at(states.get(),i),"id",0)==item.job)state=at(states.get(),i);
+            if(state&&bget(state,"active")){
+                header+="\n"+std::string(sget(state,"state"))+" · "+title_of(item);
+                line++;
+            }
+            if(&item==current&&item.job){
+                auto output=jobs.output(item.job);
+                if(!output.starts_with(item.displayed))item.displayed.clear();
+                auto end=output.rfind('\n');
+                size_t length=end==std::string::npos?0:end+1;
+                if(state&&(!bget(state,"active")||!strcmp(sget(state,"state"),tr("等待确认"))))length=output.size();
+                if(length>item.displayed.size()&&valid_utf8(std::string_view(output).substr(item.displayed.size(),length-item.displayed.size()))){
+                    terminal_message(output.substr(item.displayed.size(),length-item.displayed.size()));
+                    item.displayed=output.substr(0,length);
+                }
+            }
+        }
+        struct winsize size{};
+        if(pinned&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>0&&size.ws_col>0&&(rows!=size.ws_row||columns!=size.ws_col)){
+            rows=size.ws_row;columns=size.ws_col;
+            printf("\0337\033[%d;%dr\0338",rows>=10&&columns>=40?6:1,rows);last_header.clear();
+        }
+        if(header==last_header)return;
+        last_header=header;
+        if(pinned&&rows>=10&&columns>=40){
+            fputs("\0337",stdout);
+            size_t from=0;
+            for(int row=1;row<=5;row++){
+                auto end=header.find('\n',from);
+                std::string_view text=from<header.size()?std::string_view(header).substr(from,end==std::string::npos?header.size()-from:end-from):std::string_view{};
+                printf("\033[%d;1H\033[2K%s",row,clipped(text,columns).c_str());
+                from=end==std::string::npos?header.size():end+1;
+            }
+            fputs("\0338",stdout);fflush(stdout);
+        }else if(line>2)terminal_message("\n"+header+"\n");
+    }
+    bool active(const Conversation &item){
+        JsonPtr states(jobs.snapshot());
+        for(size_t i=0;i<alen(states.get());i++)if(iget(at(states.get(),i),"id",0)==item.job)return bget(at(states.get(),i),"active");
+        return false;
+    }
+    bool submit(Conversation &item,const std::string &task){
+        app.error[0]=0;
+        JsonPtr settings(conversation_settings(app,item.reset_context));
+        if(!item.job){
+            app.conversation_worker=true;
+            item.job=jobs.start(app,task);
+            app.conversation_worker=false;
+            if(item.job<0){item.job=0;return false;}
+        }else if(active(item)||!item.queue.empty()){
+            if(item.queue.size()>=4){puts(tr("当前对话的待执行需求已满。"));return false;}
+            item.queue.push_back({task,std::move(settings)});
+            puts(tr("已排队，当前操作结束后继续。"));
+        }else if(!jobs.resume(item.job,task,settings.get())){puts(tr("无法继续此对话，请新建对话。"));return false;}
+        item.reset_context=false;
+        checked=0;tick();return true;
+    }
+};
+#endif
 static int chat_menu(App *a,Tasks &jobs){
     puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [6] 推理模式\n  [7] 批准模式\n  [8] 返回选择对话\n  [0] 返回输入"));
     int choice=number(jobs,8);if(choice<=0)return 0;
@@ -309,11 +446,22 @@ static int chat_menu(App *a,Tasks &jobs){
     else if(choice==8)return 2;
     return interrupted==SIGTERM?-1:1;
 }
-static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr){
+static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
+#ifndef _WIN32
+    ,ConversationScreen *screen=nullptr
+#endif
+){
     if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
     printf(tr("  工作目录：%s\n"),a->root);
     puts(tr("任务及工具结果会发送到配置的 API。"));
+#ifndef _WIN32
+    puts(tr(conversation?"Ctrl+D 返回选择对话并在后台继续，Ctrl+C 停止当前对话，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+#else
     puts(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+#endif
+#ifndef _WIN32
+    if(screen)screen->current=conversation;
+#endif
     std::string last_model,last_modes;
     for(;;){
         if(input_closed||interrupted==SIGTERM)return false;
@@ -327,16 +475,33 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr){
             last_modes=std::move(modes);
         }
         std::unique_ptr<char,decltype(&free)> line(jobs.readline(": "),free);
-        if(!line){if(interrupted==SIGINT&&!input_closed)continue;return false;}
+        if(!line){
+            if(interrupted==SIGINT&&!input_closed){
+#ifndef _WIN32
+                if(screen&&conversation){conversation->queue.clear();jobs.cancel(conversation->job);}
+#endif
+                continue;
+            }
+            return false;
+        }
         std::string task=line.get();
         if(task.empty())continue;
         if(task=="/"){
+            size_t revision=a->session_revision;
             int selected=chat_menu(a,jobs);
+            if(conversation&&revision!=a->session_revision)conversation->reset_context=true;
             if(selected<0||selected==2)return false;
             if(selected==3){if(conversation)return true;reset_session(a);}
             continue;
         }
         if(conversation&&conversation->title.empty())conversation->title=conversation_title(task,true);
+#ifndef _WIN32
+        if(screen&&conversation){
+            if(task.size()==1&&task[0]>='0'&&task[0]<='3'&&jobs.respond(conversation->job,task[0]-'0'))continue;
+            if(!screen->submit(*conversation,task)&&a->error[0])fprintf(stderr,"%s\n",a->error);
+            continue;
+        }
+#endif
         if(run_task(a,task.c_str())&&!input_closed)fprintf(stderr,"%s\n",a->error);
     }
 }
@@ -366,6 +531,9 @@ static void show_banner(){
     printf("%*s\n\n",banner_width,"v" VERSION);
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
+#ifndef _WIN32
+    ConversationScreen screen(*a,jobs,items);
+#endif
     bool new_chat=false;
     while(interrupted!=SIGTERM&&!input_closed){
         const int count=static_cast<int>(items.size());
@@ -393,7 +561,10 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             auto item=items.begin()+(which-1);
             if(deleting){
                 printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
-                if(number(jobs,1)==1)items.erase(item);
+                if(number(jobs,1)==1){
+                    if(item->job)jobs.cancel(item->job);
+                    items.erase(item);
+                }
             }else{
                 auto title=conversation_title(request_text(jobs,tr("新标题（空行取消）：")),false);
                 if(!title.empty())item->title=std::move(title);
@@ -410,7 +581,13 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
         a->messages=item.messages.release();
         json_object_put(a->config);a->config=copy(item.config.get());
         a->state="等待任务";
+        #ifndef _WIN32
+        item.displayed.clear();
+        new_chat=chat(a,jobs,&item,&screen);
+        screen.current=nullptr;
+#else
         new_chat=chat(a,jobs,&item);
+#endif
         item.messages.reset(a->messages);a->messages=previous.release();
         item.config.reset(copy(a->config));
         std::rotate(items.begin(),selected,selected+1);
@@ -423,6 +600,9 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
 static int menu(App *a){
     Tasks jobs;
     std::vector<Conversation> conversations;
+#ifndef _WIN32
+    jobs.on_idle=[&]{advance_conversations(jobs,conversations);};
+#endif
     for(;;){
         if(input_closed)return 0;
         show_banner();

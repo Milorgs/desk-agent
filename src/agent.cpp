@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <algorithm>
 void reset_session(App *a){
+    a->session_revision++;
     json_object_put(a->messages);
     a->messages=arr();
     a->state="等待任务";

@@ -122,6 +122,18 @@ struct EditorSession {
     ~EditorSession(){if(state.installed)rl_callback_handler_remove();editor=nullptr;}
 };
 }
+void terminal_message(const std::string &text){
+    if(text.empty())return;
+    if(!editor||!editor->installed){fwrite(text.data(),1,text.size(),stdout);fflush(stdout);return;}
+    std::string line=rl_line_buffer;
+    int point=rl_point;
+    rl_save_prompt();rl_replace_line("",0);rl_redisplay();
+    fputs("\r\033[2K",stdout);
+    fwrite(text.data(),1,text.size(),stdout);
+    if(text.back()!='\n')putchar('\n');
+    rl_restore_prompt();rl_replace_line(line.c_str(),0);rl_point=point;
+    rl_on_new_line();rl_redisplay();fflush(stdout);
+}
 char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle){
     if(input_closed)return nullptr;
     if(!secret&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)){
