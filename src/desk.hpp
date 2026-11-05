@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.5.11"
+#define VERSION "1.5.12"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000

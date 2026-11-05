@@ -13,6 +13,7 @@ constexpr Translation catalog[]={
     {"输入该模型的新编号（0 返回）。","Enter the new model number (0 to go back)."},
     {"  累计 Token（接口报告）：%llu\n","  Lifetime tokens (reported by API): %llu\n"},
     {"  已导入的模型","  Imported models"},
+    {" · 当前"," · Current"},
     {"    暂无已导入的模型","    No imported models"},
     {"  当前模型：%s\n","  Current model: %s\n"},
     {"  当前模型：未配置","  Current model: not configured"},
