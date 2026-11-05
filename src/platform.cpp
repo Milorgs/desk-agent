@@ -7,6 +7,21 @@
 #include <windows.h>
 #include <cstdarg>
 #include <unordered_map>
+#else
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
+int terminal_columns(){
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    if(!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE),&info))return 0;
+    return info.srWindow.Right-info.srWindow.Left+1;
+#else
+    struct winsize size{};
+    return ioctl(STDOUT_FILENO,TIOCGWINSZ,&size)==0?size.ws_col:0;
+#endif
+}
+#ifdef _WIN32
 std::wstring wide(std::string_view value){
     if(value.empty())return {};
     int size=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0);

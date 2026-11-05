@@ -12,6 +12,7 @@ char *canonical_directory(const char *path,char *out);
 bool path_inside(const fs::path &root,const fs::path &path);
 bool path_link(const fs::path &path);
 void platform_initialize();
+int terminal_columns();
 const char *env_value(const char *name);
 #ifdef _WIN32
 #ifndef PATH_MAX

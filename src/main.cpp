@@ -336,6 +336,20 @@ static void show_token_usage(J *usage,J *config){
     if(usage)printf(tr("  累计 Token（接口报告）：%llu\n"),static_cast<unsigned long long>(model_tokens(usage,config)));
     else puts(tr("  无法读取累计 Token 用量。"));
 }
+static void show_banner(){
+    constexpr int banner_width=64;
+    if(terminal_columns()<=banner_width){
+        printf("\n  desk-agent %s\n",VERSION);
+        return;
+    }
+    fputs("\n"
+            "      _              _                                      _\n"
+            "   __| |  ___   ___ | |__        __ _   __ _   ___   _ _   | |_\n"
+            "  / _` | / -_) (_-< | / /  ___  / _` | / _` | / -_) | ' \\  |  _|\n"
+            "  \\__,_| \\___| /__/ |_\\_\\ |___| \\__,_| \\__, | \\___| |_||_|  \\__|\n"
+            "                                       |___/\n",stdout);
+    printf("  v%s\n\n",VERSION);
+}
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
     bool new_chat=false;
     while(interrupted!=SIGTERM&&!input_closed){
@@ -396,7 +410,7 @@ static int menu(App *a){
     std::vector<Conversation> conversations;
     for(;;){
         if(input_closed)return 0;
-        printf("\n  desk %s\n",VERSION);
+        show_banner();
         puts(tr("  已导入的模型"));
         JsonPtr usage(load_tokens(*a));
         J *profiles=get(a->store,"profiles");
