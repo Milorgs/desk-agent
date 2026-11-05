@@ -413,8 +413,8 @@ static int menu(App *a){
         if(*sget(a->config,"model"))printf(tr("  当前模型：%s / %s\n"),sget(a->config,"profile"),sget(a->config,"model"));
         else puts(tr("  当前模型：未配置"));
         if(*sget(a->config,"model")||!usage)show_token_usage(usage.get(),a->config);
-        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 退出"));
-        int choice=number(jobs,6);
+        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [0] 退出"));
+        int choice=number(jobs,5);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
         int rc=0;
@@ -423,7 +423,6 @@ static int menu(App *a){
         else if(choice==3)rc=add_model(a,nullptr);
         else if(choice==4)task_menu(a,jobs);
         else if(choice==5)settings_menu(a,jobs);
-        else if(choice==6)status(a);
         if(rc)fprintf(stderr,"%s\n",a->error);
         if(interrupted==SIGTERM)return 143;
     }
