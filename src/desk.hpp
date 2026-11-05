@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.5.15"
+#define VERSION "1.5.16"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -30,6 +30,9 @@ struct App {
     J *store=nullptr, *config=nullptr, *messages=nullptr;
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
     bool yes=false, auto_edit=false, shell=true, desktop=false, record=false, verbose=false, progress_visible=false;
+    bool progress_animated=false;
+    std::string progress_text{};
+    double progress_updated=0;
     int max_steps=20;
     std::intptr_t task_events=-1;
     const char *state="等待任务";
@@ -40,6 +43,7 @@ extern std::atomic<bool> input_closed;
 void progress(App *app,const char *text);
 void check_exit(const App &app);
 void progress_clear(App *app);
+void progress_tick(App *app);
 const char *tr(const char *text);
 const char *language_code();
 bool set_language(const char *code);

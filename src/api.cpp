@@ -23,7 +23,11 @@ static size_t receive(char *p,size_t size,size_t count,void *user){
     return n;
 }
 static int transfer_progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl_off_t v){
-    if(u)check_exit(*static_cast<App *>(u));
+    if(u){
+        auto *app=static_cast<App *>(u);
+        check_exit(*app);
+        progress_tick(app);
+    }
     (void)d;
     (void)n;
     (void)t;
@@ -102,9 +106,12 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         }
         bool retry=status==429||status==500||status==502||status==503||status==504||status==529;
         if(retry&&attempt<2&&!interrupted){
-            fprintf(stderr,tr("API HTTP %ld，正在重试（%d/2）…\n"),status,attempt+1);
+            char message[160];
+            snprintf(message,sizeof message,tr("API HTTP %ld，正在重试（%d/2）…"),status,attempt+1);
+            if(a->progress_visible)progress(a,message);
+            else fprintf(stderr,"%s\n",message);
             auto until=monotime()+(1<<attempt);
-            while(monotime()<until&&!interrupted){check_exit(*a);std::this_thread::sleep_for(std::chrono::milliseconds(50));}
+            while(monotime()<until&&!interrupted){check_exit(*a);progress_tick(a);std::this_thread::sleep_for(std::chrono::milliseconds(50));}
             if(interrupted){
                 seterr(a,tr("请求已取消。"));
                 return NULL;

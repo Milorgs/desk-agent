@@ -243,6 +243,7 @@ int run_task(App *a,const char *task){
         J *history=context(a,tools);
         if(!history)break;
         if(!trimmed&&alen(history)<alen(a->messages)){
+            progress_clear(a);
             puts(tr("较早的任务未发送给模型，当前任务及其工具结果完整保留。"));
             trimmed=true;
         }

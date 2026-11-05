@@ -16,7 +16,7 @@ static void on_signal(int number){
 }
 #endif
 static void status(App *a){
-    printf(tr("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
+    printf(tr("\n  desk-agent %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
     printf(tr("  推理模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")));
 }
 static char *field(const char *name,const char *fallback,bool secret){
@@ -145,7 +145,7 @@ static int select_model(App *a,Tasks &jobs){
     puts(tr("\n选择模型："));
     json_object_object_foreach(profiles,name,entry){
         order.emplace_back(name);
-        printf("  [%zu] %s / %s (%s)\n",order.size(),name,sget(entry,"model"),sget(entry,"protocol"));
+        printf("  [%zu] %s (%s)\n",order.size(),sget(entry,"model"),sget(entry,"protocol"));
     }
     int count=static_cast<int>(order.size());
     if(count>1)printf(tr("  [%d] 调整模型编号\n"),count+1);
@@ -311,13 +311,21 @@ static int chat_menu(App *a,Tasks &jobs){
 }
 static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr){
     if(conversation)printf(tr("\n对话：%s\n"),title_of(*conversation));
-    status(a);
+    printf(tr("  工作目录：%s\n"),a->root);
     puts(tr("任务及工具结果会发送到配置的 API。"));
     puts(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+    std::string last_model,last_modes;
     for(;;){
         if(input_closed||interrupted==SIGTERM)return false;
         if(interrupted==SIGINT)interrupted=0;
-        printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
+        std::string model=sget(a->config,"model");
+        std::string modes=std::string(language_code())+" "+reasoning_name(sget(a->config,"reasoning_effort"))+" "+permission_name(*a);
+        if(model!=last_model||modes!=last_modes){
+            printf(tr("  当前模型：%s\n"),model.c_str());
+            printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
+            last_model=std::move(model);
+            last_modes=std::move(modes);
+        }
         std::unique_ptr<char,decltype(&free)> line(jobs.readline(": "),free);
         if(!line){if(interrupted==SIGINT&&!input_closed)continue;return false;}
         std::string task=line.get();

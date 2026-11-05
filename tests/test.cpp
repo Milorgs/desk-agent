@@ -1027,8 +1027,8 @@ static void test_chat_exit_paths(void){
         if(route==4){CHECK(terminal_until(master,output,"[0] Exit"));}
         else{
             CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));output.clear();
-            if(route==1){CHECK(write(master,"\n",1)==1);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));}
-            else if(route==2){CHECK(kill(child,SIGINT)==0);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));}
+            if(route==1){CHECK(write(master,"\n",1)==1);CHECK(terminal_until(master,output,": "));CHECK(output.find("Approval:")==std::string::npos);}
+            else if(route==2){CHECK(kill(child,SIGINT)==0);CHECK(terminal_until(master,output,": "));CHECK(output.find("Approval:")==std::string::npos);}
             else if(route==3){CHECK(write(master,"/\n6\n",4)==4);CHECK(terminal_until(master,output,"[7] Restore provider default"));}
         }
         CHECK(kill(child,0)==0);
@@ -1132,7 +1132,7 @@ static void test_line_editing(void){
 static void test_queued_editing(void){
     App a=fresh();json_object_put(a.config);a.config=config("queued-edit","openai");
     std::string first=model_tool("run","run_shell",command("sleep .4")),second=model_reply(nullptr,"PRETYPE_DONE"),third=model_reply(nullptr,"QUEUED_DONE");const char *responses[]={first.c_str(),second.c_str(),third.c_str()};pid_t server=fake_server(&a,responses,3);CHECK(!save_config(&a,a.config));
-    int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
+    int master=-1;struct winsize window{24,80,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
     if(!child){setenv("TERM","xterm-256color",1);setenv("INPUTRC","/dev/null",1);execl("./build/desk","desk","--lang","en","--yes","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     CHECK(write(master,"1\n1\nfirst\n",10)==10);std::string output;CHECK(terminal_until(master,output,"Running a command..."));
     std::string queued="排队😀\x7f下一句\n";type_terminal(master,output,queued);CHECK(terminal_until(master,output,"QUEUED_DONE"));wait_for_chat_prompt(master,output,"QUEUED_DONE");

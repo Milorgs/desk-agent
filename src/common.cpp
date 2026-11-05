@@ -14,7 +14,7 @@ std::atomic<bool> input_closed{false};
 void progress_clear(App *app){
     if(app->progress_visible){
 #ifdef _WIN32
-        fputs("\r                              \r",stdout);
+        fputs(app->progress_animated?"\r\033[2K":"\r                              \r",stdout);
 #else
         fputs("\r\033[2K",stdout);
 #endif
@@ -23,8 +23,24 @@ void progress_clear(App *app){
 }
 void progress(App *app,const char *text){
     progress_clear(app);
-    if(app->task_events<0&&isatty(1)){fputs(text,stdout);app->progress_visible=true;}
+    if(app->task_events<0&&isatty(1)){
+        app->progress_text=text;
+        app->progress_animated=terminal_supports_color()&&terminal_columns()>40;
+        app->progress_updated=monotime();
+        fputs(text,stdout);
+        if(app->progress_animated)fputs(" |",stdout);
+        app->progress_visible=true;
+    }
     else puts(text);
+    fflush(stdout);
+}
+void progress_tick(App *app){
+    if(!app->progress_visible||!app->progress_animated||interrupted)return;
+    const double now=monotime();
+    if(now-app->progress_updated<0.2)return;
+    app->progress_updated=now;
+    const char frame="|/-\\"[static_cast<unsigned long long>(now*5)%4];
+    printf("\r%s %c",app->progress_text.c_str(),frame);
     fflush(stdout);
 }
 J *obj(void){
