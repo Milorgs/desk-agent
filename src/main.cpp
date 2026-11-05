@@ -345,26 +345,25 @@ static void show_token_usage(J *usage,J *config){
     else puts(tr("  无法读取累计 Token 用量。"));
 }
 static void show_banner(){
-    constexpr int banner_width=64;
+    constexpr int banner_width=59;
     const bool color=terminal_supports_color();
     const char *reset=color?"\033[0m":"";
     if(terminal_columns()<=banner_width){
-        printf("\n  %sdesk%s-agent %s\n",color?"\033[3;94m":"",reset,VERSION);
+        printf("\n  %sdesk-agent%s  v%s\n\n",color?"\033[3;94m":"",reset,VERSION);
         return;
     }
-    constexpr int desk_width=24;
-    constexpr struct {const char *desk;const char *agent;} logo[]={
-        {"       __          __",""},
-        {"  ____/ /__  _____/ /__","                                   _"},
-        {" / __  / _ \\/ ___/ //_/","       __ _   __ _   ___   _ _   | |_"},
-        {"/ /_/ /  __(__  ) ,<"," ___  / _` | / _` | / -_) | ' \\  |  _|"},
-        {"\\__,_/\\___/____/_/|_|","|___| \\__,_| \\__, | \\___| |_||_|  \\__|"},
-        {"","             |___/"},
+    constexpr const char *logo[]={
+        "         __          __                               __",
+        "    ____/ /__  _____/ /__       ____ _____ ___  ____  / /_",
+        "   / __  / _ \\/ ___/ //_/ ___  / __ `/ __ `/ _ \\/ __ \\/ __/",
+        "  / /_/ /  __(__  ) ,<   /___// /_/ / /_/ /  __/ / / / /_",
+        "  \\__,_/\\___/____/_/|_|       \\__,_/\\__, /\\___/_/ /_/\\__/",
+        "                                   /____/",
     };
     const char *blue=color?"\033[94m":"";
     putchar('\n');
-    for(const auto &row:logo)printf("  %s%-*s%s%s\n",blue,desk_width,row.desk,reset,row.agent);
-    printf("  v%s\n\n",VERSION);
+    for(const auto *row:logo)printf("%s%s%s\n",blue,row,reset);
+    printf("%*s\n\n",banner_width,"v" VERSION);
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
     bool new_chat=false;
