@@ -183,38 +183,9 @@ char *Tasks::readline(const char *prompt){
         if(fds[0].revents&(POLLIN|POLLHUP))return input("",nullptr,false);
     }
 }
-void Tasks::attach(int id){
-    Job *j=impl->find(id);if(!j){puts(tr("任务编号不存在。"));return;}
-    bool first=true;
-    for(;;){
-        refresh();
-        printf(tr("\n任务 [%d]：%s · %s\n"),id,j->title.c_str(),tr(j->state.c_str()));
-        if(first){if(j->truncated)puts(tr("…仅保留最近 64 KB 输出。"));fwrite(j->output.data(),1,j->output.size(),stdout);first=false;}
-        puts(tr("\n  [1] 刷新输出\n  [2] 确认待处理操作\n  [3] 继续此任务\n  [4] 停止此任务\n  [0] 返回"));
-        std::unique_ptr<char,decltype(&free)> text(readline(tr("请选择编号：")),free);
-        if(!text||interrupted)return;
-        std::string choice=text.get();refresh();
-        if(choice=="0")return;
-        if(choice=="1")first=true;
-        else if(choice=="2"){
-            if(!j->active||j->state!="等待确认"){puts(tr("当前没有待确认的操作。"));continue;}
-            if(j->truncated)puts(tr("…仅保留最近 64 KB 输出。"));
-            fwrite(j->output.data(),1,j->output.size(),stdout);
-            puts(tr("\n本次操作\n  [1] 允许\n  [2] 拒绝\n  [0] 返回"));
-            std::unique_ptr<char,decltype(&free)> answer(readline(tr("请选择编号：")),free);
-            if(answer&&j->active&&j->state=="等待确认"){
-                if(!strcmp(answer.get(),"1"))write_all(j->master,"1\n");
-                else if(!strcmp(answer.get(),"2"))write_all(j->master,"2\n");
-            }
-        }else if(choice=="3"){
-            if(j->active){puts(tr("请等待此任务结束后再继续。"));continue;}
-            std::unique_ptr<char,decltype(&free)> task(readline(tr("新需求（回车返回）：")),free);
-            if(task&&*task){if(resume(id,task.get()))puts(tr("已继续该任务，保留原模型和对话。"));else puts(tr("无法继续此任务，或当前活动任务已满。"));}
-        }else if(choice=="4")puts(cancel(id)?tr("已请求停止该任务。"):tr("任务不存在或已经结束。"));
-        else puts(tr("请输入列表中的编号。"));
-    }
-}
-int task_worker(int fd){
+std::string Tasks::output(int id,bool *truncated){refresh();Job *j=impl->find(id);if(!j)return {};if(truncated)*truncated=j->truncated;return j->output;}
+bool Tasks::decide(int id,bool allow){refresh();Job *j=impl->find(id);return j&&j->active&&j->state=="等待确认"&&write_all(j->master,allow?"1\n":"2\n");}
+int task_worker(std::intptr_t fd){
     FILE *control=fdopen(fd,"r");if(!control)return 1;
     fcntl(fd,F_SETFD,FD_CLOEXEC);
     struct Control {FILE *file;char *line=nullptr;size_t capacity=0;~Control(){free(line);fclose(file);}} source{control};

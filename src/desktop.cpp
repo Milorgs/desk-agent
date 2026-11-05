@@ -185,3 +185,5 @@ J *desktop_act(App *a,const char *r,const char *action,const char *text){
     return err(tr("本次构建未启用 AT-SPI。"));
 }
 #endif
+
+void desktop_destroy(App *a){desktop_clear(a);free(a->desktop_data);a->desktop_data=nullptr;}

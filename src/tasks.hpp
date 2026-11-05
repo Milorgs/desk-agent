@@ -14,10 +14,12 @@ public:
     bool cancel(int id);
     bool resume(int id,const std::string &task);
     void attach(int id);
+    std::string output(int id,bool *truncated=nullptr);
+    bool decide(int id,bool allow);
     char *readline(const char *prompt="\n› ");
 };
 class ResourceLock {
-    int fd=-1;
+    std::intptr_t fd=-1;
 public:
     ResourceLock(App &app,bool desktop);
     ~ResourceLock();
@@ -26,5 +28,5 @@ public:
     bool acquired() const { return fd>=0; }
 };
 void task_event(App &app,char state);
-int task_worker(int fd);
+int task_worker(std::intptr_t fd);
 #endif

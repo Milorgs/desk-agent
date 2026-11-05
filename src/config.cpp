@@ -6,7 +6,9 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 static char *trim(char *s){
     while(isspace((unsigned char)*s))s++;
     char *e=s+strlen(s);
@@ -237,12 +239,8 @@ static J *legacy_store(App *a){
     return NULL;
 }
 int store_load(App *a){
-    const char *base=getenv("XDG_CONFIG_HOME");
-    char fallback[PATH_MAX];
-    if(!base||!*base){
-        snprintf(fallback,sizeof fallback,"%s/.config",getenv("HOME")?getenv("HOME"):".");
-        base=fallback;
-    }
+    std::string base_path=config_base();
+    const char *base=base_path.c_str();
     if(snprintf(a->config_dir,sizeof a->config_dir,"%s/desk-agent",base)>=(int)sizeof a->config_dir){
         seterr(a,tr("配置目录路径过长。"));
         return -1;
@@ -279,7 +277,7 @@ int store_load(App *a){
         "DESK_BASE_URL","DESK_MODEL","DESK_API_KEY","DESK_API_TYPE"
     };
     for(int i=0;i<4;i++){
-        const char *v=getenv(envs[i]);
+        const char *v=env_value(envs[i]);
         if(v&&*v)put(a->config,fields[i],str(v));
     }
     return 0;

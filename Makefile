@@ -8,14 +8,14 @@ LDLIBS += $(shell pkg-config --libs $(PKGS) $(ATSPI))
 ifneq ($(ATSPI),)
 CPPFLAGS += -DWITH_ATSPI
 endif
-CORE = src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
+CORE = src/common.cpp src/platform.cpp src/tasks_ui.cpp src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
 .PHONY: all clean test sanitize install
 all: build/desk
 build:
 	mkdir -p build
-build/desk: $(CORE) src/main.cpp src/desk.hpp src/tasks.hpp | build
+build/desk: $(CORE) src/main.cpp src/desk.hpp src/tasks.hpp src/platform.hpp | build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) $(CORE) src/main.cpp $(LDFLAGS) $(LDLIBS) -lutil -o $@
-build/test: $(CORE) tests/test.cpp src/desk.hpp src/tasks.hpp | build
+build/test: $(CORE) tests/test.cpp src/desk.hpp src/tasks.hpp src/platform.hpp | build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) $(CORE) tests/test.cpp $(LDFLAGS) $(LDLIBS) -lutil -o $@
 test: build/desk build/test
 	./build/test

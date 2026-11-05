@@ -1,0 +1,10 @@
+{
+  "name": "desk-agent",
+  "version-string": "1.5.0",
+  "dependencies": [
+    "curl",
+    "json-c",
+    "openssl"
+  ],
+  "builtin-baseline": "db00e0c76ae37ede9464c157a3ec8653f8fbb494"
+}

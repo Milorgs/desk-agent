@@ -10,11 +10,13 @@
 #include <limits.h>
 #include <sys/types.h>
 #include <stdint.h>
+#include "platform.hpp"
 #include <memory>
+#include <atomic>
 #include <string>
 #include <string_view>
 #include <vector>
-#define VERSION "1.4.0"
+#define VERSION "1.5.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -28,11 +30,11 @@ struct App {
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
     bool yes=false, shell=true, desktop=false, record=false;
     int max_steps=20;
-    int task_events=-1;
+    std::intptr_t task_events=-1;
     const char *state="等待任务";
     void *desktop_data=nullptr;
 };
-extern volatile sig_atomic_t interrupted;
+extern std::atomic<int> interrupted;
 const char *tr(const char *text);
 const char *language_code();
 bool set_language(const char *code);
@@ -56,8 +58,8 @@ J *err(const char *message);
 void seterr(App *a,const char *message);
 char *read_bytes(const char *path,size_t limit,size_t *length);
 int path_suffix(char out[PATH_MAX],const char *base,const char *suffix);
-int mkdirs(const char *path,mode_t mode);
-int atomic_file(const char *path,const void *data,size_t len,mode_t mode);
+int mkdirs(const char *path,unsigned int mode);
+int atomic_file(const char *path,const void *data,size_t len,unsigned int mode);
 char *input(const char *prompt,const char *fallback,bool secret);
 int approve(App *a,const char *description);
 void id_string(char out[33]);
@@ -82,6 +84,7 @@ char *sha256(const void *bytes,size_t len);
 J *desktop_snapshot(App *a,const char *app);
 J *desktop_act(App *a,const char *ref,const char *action,const char *text);
 void desktop_clear(App *a);
+void desktop_destroy(App *a);
 bool desktop_compiled(void);
 void reset_session(App *a);
 int run_task(App *a,const char *task);

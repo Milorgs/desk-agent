@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <thread>
+#include <chrono>
 struct Buffer {
     std::string data;
     bool oversized=false;
@@ -100,11 +102,8 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload){
         bool retry=status==429||status==500||status==502||status==503||status==504||status==529;
         if(retry&&attempt<2&&!interrupted){
             fprintf(stderr,tr("API HTTP %ld，正在重试（%d/2）…\n"),status,attempt+1);
-            struct timespec t={
-                1<<attempt,0
-            };
-            while(nanosleep(&t,&t)&&!interrupted){
-            }
+            auto until=monotime()+(1<<attempt);
+            while(monotime()<until&&!interrupted)std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if(interrupted){
                 seterr(a,tr("请求已取消。"));
                 return NULL;

@@ -4,11 +4,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <locale.h>
+
+#ifndef _WIN32
 static void on_signal(int number){
     interrupted=number;
 }
+#endif
 static void status(App *a){
     printf(tr("\n  desk %s\n  当前模型：%s / %s\n  接口：%s\n  工作目录：%s\n  任务：%s\n  桌面：%s  操作：%s\n"),VERSION,sget(a->config,"profile"),sget(a->config,"model"),sget(a->config,"protocol"),a->root,tr(a->state?a->state:"等待任务"),a->desktop?tr("开启"):tr("关闭"),a->yes?tr("自动批准"):tr("执行前确认"));
 }
@@ -285,15 +290,18 @@ static void help(void){
 }
 static int run_cli(int argc,char **argv){
     setlocale(LC_ALL,"");
+    platform_initialize();
+#ifndef _WIN32
     struct sigaction action{};
     action.sa_handler=on_signal;
     sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL);
     sigaction(SIGTERM,&action,NULL);
     signal(SIGPIPE,SIG_IGN);
+#endif
     if(argc==3&&!strcmp(argv[1],"--task-worker")){
-        char *end=nullptr;long fd=strtol(argv[2],&end,10);
-        return *end||fd<3||fd>1048576?2:task_worker(static_cast<int>(fd));
+        char *end=nullptr;long long fd=strtoll(argv[2],&end,10);
+        return *end||fd<3?2:task_worker(static_cast<std::intptr_t>(fd));
     }
     App a={
         .yes=false,.shell=true,.desktop=false,.record=false,.max_steps=20,.state="等待任务"
@@ -345,7 +353,7 @@ static int run_cli(int argc,char **argv){
         }
         else task=arg;
     }
-    if(!realpath(workspace,a.root)){
+    if(!canonical_directory(workspace,a.root)){
         fputs(tr("工作目录不存在。\n"),stderr);
         rc=1;
         goto cleanup;
@@ -400,7 +408,8 @@ static int run_cli(int argc,char **argv){
     cleanup:
     return interrupted==SIGTERM?143:interrupted==SIGINT?130:rc;
 }
-int main(int argc,char **argv){
+int desk_main(int argc,char **argv){
+    platform_initialize();
     if(!language_init(argc,argv)){fputs(tr("语言必须为 zh 或 en。\n"),stderr);return 2;}
     if(curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK){
         fputs(tr("无法初始化网络组件。\n"),stderr);
@@ -413,3 +422,14 @@ int main(int argc,char **argv){
     curl_global_cleanup();
     return result;
 }
+
+#ifdef _WIN32
+int wmain(int argc,wchar_t **argv){
+    std::vector<std::string> arguments;arguments.reserve(static_cast<size_t>(argc));
+    for(int i=0;i<argc;i++)arguments.push_back(utf8(argv[i]));
+    std::vector<char *> pointers;for(auto &arg:arguments)pointers.push_back(arg.data());pointers.push_back(nullptr);
+    return desk_main(argc,pointers.data());
+}
+#else
+int main(int argc,char **argv){return desk_main(argc,argv);}
+#endif

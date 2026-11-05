@@ -2,16 +2,12 @@
 #include "tasks.hpp"
 #include <openssl/evp.h>
 #include <sys/stat.h>
-#include <dirent.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <cctype>
 #include <errno.h>
-static bool inside(const char *root,const char *path){
-    size_t n=strlen(root);
-    return !strncmp(root,path,n)&&(path[n]=='/'||!path[n]||!strcmp(root,"/"));
-}
 char *sha256(const void *data,size_t len){
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned int n=0;
@@ -22,61 +18,42 @@ char *sha256(const void *data,size_t len){
     return out;
 }
 int resolve_file(App *a,const char *path,char out[PATH_MAX]){
-    char raw[PATH_MAX];
-    int length=path[0]=='/'?snprintf(raw,sizeof raw,"%s",path):snprintf(raw,sizeof raw,"%s/%s",a->root,path);
-    if(length>=(int)sizeof raw){
-        seterr(a,tr("文件路径过长。"));
-        return -1;
+    fs::path input=fs_path(path),root=fs_path(a->root);
+    for(const auto &part:input)if(part==".."){seterr(a,tr("不接受含 .. 的文件路径。"));return -1;}
+#ifdef _WIN32
+    // Reject alternate streams, device namespaces, aliases and drive-relative paths.
+    std::string raw=path;
+    if(raw.rfind("\\\\",0)==0||raw.rfind("//",0)==0||(input.has_root_name()&&!input.is_absolute())){seterr(a,tr("文件路径无效。"));return -1;}
+    for(const auto &part:input.relative_path()){
+        std::string name=path_text(part);if(name.empty()||name==".")continue;
+        if(name.find(':')!=std::string::npos||name.back()=='.'||name.back()==' '){seterr(a,tr("文件路径无效。"));return -1;}
+        std::string base=name.substr(0,name.find('.'));for(char &c:base)c=static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if(base=="CON"||base=="PRN"||base=="AUX"||base=="NUL"||(base.size()==4&&(base.rfind("COM",0)==0||base.rfind("LPT",0)==0)&&base[3]>='0'&&base[3]<='9')){seterr(a,tr("文件路径无效。"));return -1;}
     }
-    char check[PATH_MAX];
-    strcpy(check,raw);
-    char *save=NULL;
-    for(char *p=strtok_r(check,"/",&save);p;p=strtok_r(NULL,"/",&save))if(!strcmp(p,"..")){
-        seterr(a,tr("不接受含 .. 的文件路径。"));
-        return -1;
-    }
-    if(!realpath(raw,out)){
-        if(errno!=ENOENT){
-            seterr(a,tr("无法解析文件路径。"));
-            return -1;
+#endif
+    fs::path candidate=input.is_absolute()?input:root/input;
+    std::error_code ec;
+#ifdef _WIN32
+    fs::path current;
+    for(const auto &part:candidate){current/=part;if(path_link(current)){seterr(a,tr("文件工具只能访问工作目录。"));return -1;}}
+#endif
+    fs::path resolved=fs::weakly_canonical(candidate,ec);
+    if(ec){seterr(a,tr("无法解析文件路径。"));return -1;}
+    if(!path_inside(root,resolved)){seterr(a,tr("文件工具只能访问工作目录。"));return -1;}
+    auto config=fs::weakly_canonical(fs_path(a->config_dir),ec);
+    if(!ec&&path_inside(config,resolved)){seterr(a,tr("文件工具不访问模型配置与密钥。"));return -1;}
+    for(const auto &part:resolved.lexically_relative(root)){
+        std::string name=path_text(part);
+#ifdef _WIN32
+        for(char &c:name)c=static_cast<char>(tolower(static_cast<unsigned char>(c)));
+#endif
+        if(name==".git"||name==".desk-agent"||name==".ssh"||name==".gnupg"||(name.rfind(".env",0)==0&&(name.size()==4||name[4]=='.')&&name!=".env.example")){
+            seterr(a,tr("文件工具不访问凭据、Git 内部文件或备份。"));return -1;
         }
-        char prefix[PATH_MAX],tail[PATH_MAX]="";
-        strcpy(prefix,raw);
-        while(!realpath(prefix,out)){
-            char *slash=strrchr(prefix,'/');
-            if(!slash){
-                seterr(a,tr("文件路径无效。"));
-                return -1;
-            }
-            char next[PATH_MAX];
-            if(snprintf(next,sizeof next,"/%s%s",slash+1,tail)>=(int)sizeof next)return -1;
-            strcpy(tail,next);
-            if(slash==prefix){
-                prefix[1]=0;
-            }
-            else *slash=0;
-        }
-        if(strlen(out)+strlen(tail)>=PATH_MAX)return -1;
-        strcat(out,tail);
     }
-    if(!inside(a->root,out)){
-        seterr(a,tr("文件工具只能访问工作目录。"));
-        return -1;
-    }
-    char cfg[PATH_MAX];
-    if(realpath(a->config_dir,cfg)&&inside(cfg,out)){
-        seterr(a,tr("文件工具不访问模型配置与密钥。"));
-        return -1;
-    }
-    const char *relative=out+strlen(a->root);
-    strncpy(check,relative,sizeof check-1);
-    check[sizeof check-1]=0;
-    save=NULL;
-    for(char *p=strtok_r(check,"/",&save);p;p=strtok_r(NULL,"/",&save))if(!strcmp(p,".git")||!strcmp(p,".desk-agent")||!strcmp(p,".ssh")||!strcmp(p,".gnupg")||(!strncmp(p,".env",4)&&(!p[4]||p[4]=='.')&&strcmp(p,".env.example"))){
-        seterr(a,tr("文件工具不访问凭据、Git 内部文件或备份。"));
-        return -1;
-    }
-    return 0;
+    std::string text=path_text(resolved);
+    if(text.size()>=PATH_MAX){seterr(a,tr("文件路径过长。"));return -1;}
+    memcpy(out,text.c_str(),text.size()+1);return 0;
 }
 static bool utf8_text(const char *bytes,size_t n){
     return !memchr(bytes,0,n)&&valid_utf8(std::string_view(bytes,n));
@@ -102,23 +79,17 @@ static J *file_read(App *a,const char *path){
 static J *file_list(App *a,const char *path){
     char full[PATH_MAX];
     if(resolve_file(a,path,full))return err(a->error);
-    DIR *directory=opendir(full);
-    if(!directory)return err(tr("无法读取文件夹。"));
+    std::error_code ec;fs::directory_iterator directory(fs_path(full),ec);
+    if(ec)return err(tr("无法读取文件夹。"));
     J *result=obj(),*entries=arr();
-    struct dirent *entry;
-    while((entry=readdir(directory))&&alen(entries)<200){
-        if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,".."))continue;
-        char child[PATH_MAX],resolved[PATH_MAX];
-        if(snprintf(child,sizeof child,"%s/%s",full,entry->d_name)>=(int)sizeof child||resolve_file(a,child,resolved))continue;
-        struct stat st;
-        if(lstat(child,&st))continue;
-        J *e=obj();
-        put(e,"name",str(entry->d_name));
-        put(e,"directory",json_object_new_boolean(S_ISDIR(st.st_mode)));
-        put(e,"symlink",json_object_new_boolean(S_ISLNK(st.st_mode)));
-        add(entries,e);
+    for(auto it=directory;it!=fs::directory_iterator{}&&alen(entries)<200;it.increment(ec)){
+        if(ec)break;
+        std::string child=path_text(it->path());char resolved[PATH_MAX];
+        if(resolve_file(a,child.c_str(),resolved))continue;
+        J *e=obj();put(e,"name",str(path_text(it->path().filename()).c_str()));
+        put(e,"directory",json_object_new_boolean(it->is_directory(ec)));
+        put(e,"symlink",json_object_new_boolean(path_link(it->path())));add(entries,e);
     }
-    closedir(directory);
     put(result,"possibly_truncated",json_object_new_boolean(alen(entries)==200));
     put(result,"entries",entries);
     return result;
@@ -141,26 +112,21 @@ static bool search_skip(const char *name){
 static void search_walk(Search *s,const char *path,int depth){
     if(search_limit(s))return;
     s->entries++;
-    struct stat st;
-    if(lstat(path,&st)||S_ISLNK(st.st_mode)){s->skipped++;return;}
-    char full[PATH_MAX];
-    if(resolve_file(s->app,path,full)){s->skipped++;return;}
-    if(S_ISDIR(st.st_mode)){
+    std::error_code ec;fs::path source=fs_path(path);
+    if(path_link(source)){s->skipped++;return;}
+    auto status=fs::symlink_status(source,ec);if(ec){s->skipped++;return;}
+    char full[PATH_MAX];if(resolve_file(s->app,path,full)){s->skipped++;return;}
+    if(fs::is_directory(status)){
         if(depth>=16){s->truncated=true;return;}
-        DIR *directory=opendir(full);
-        if(!directory){s->skipped++;return;}
-        struct dirent *entry;
-        while(!search_limit(s)&&(entry=readdir(directory))){
-            if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,".."))continue;
-            if(search_skip(entry->d_name)){s->skipped++;continue;}
-            char child[PATH_MAX];
-            if(snprintf(child,sizeof child,"%s/%s",full,entry->d_name)>=(int)sizeof child){s->skipped++;continue;}
-            search_walk(s,child,depth+1);
+        fs::directory_iterator directory(fs_path(full),ec);if(ec){s->skipped++;return;}
+        for(auto it=directory;it!=fs::directory_iterator{}&&!search_limit(s);it.increment(ec)){
+            if(ec){s->skipped++;break;}
+            std::string name=path_text(it->path().filename());if(search_skip(name.c_str())){s->skipped++;continue;}
+            std::string child=path_text(it->path());search_walk(s,child.c_str(),depth+1);
         }
-        closedir(directory);
         return;
     }
-    if(!S_ISREG(st.st_mode)){s->skipped++;return;}
+    if(!fs::is_regular_file(status)){s->skipped++;return;}
     s->files++;
     size_t n=0;
     char *data=read_bytes(full,FILE_LIMIT,&n);
@@ -202,8 +168,8 @@ static J *file_search(App *a,J *args){
     if(!*query||strlen(query)>256||strchr(query,'\n')||strchr(query,'\r'))return err(tr("搜索内容须为 1..256 字节的单行文本，按字面匹配。"));
     char full[PATH_MAX];
     if(resolve_file(a,sget(args,"path"),full))return err(a->error);
-    struct stat st;
-    if(lstat(full,&st)||(!S_ISDIR(st.st_mode)&&!S_ISREG(st.st_mode)))return err(tr("搜索路径须为存在的文件或目录。"));
+    std::error_code ec;auto status=fs::status(fs_path(full),ec);
+    if(ec||(!fs::is_directory(status)&&!fs::is_regular_file(status)))return err(tr("搜索路径须为存在的文件或目录。"));
     Search s={.app=a,.query=query,.matches=arr(),.until=monotime()+3};
     search_walk(&s,full,0);
     if(interrupted){json_object_put(s.matches);return err(tr("搜索已取消。"));}
@@ -221,10 +187,11 @@ static J *file_write(App *a,J *args,const char *preview){
     if(n>FILE_LIMIT)return err(tr("文件超过 64 KB 限制。"));
     char full[PATH_MAX];
     if(resolve_file(a,path,full))return err(a->error);
-    struct stat st;
-    bool exists=lstat(full,&st)==0;
-    if(!exists&&errno!=ENOENT)return err(tr("无法访问目标文件。"));
-    if(exists&&!S_ISREG(st.st_mode))return err(tr("目标不是普通文件。"));
+    std::error_code ec;auto status=fs::symlink_status(fs_path(full),ec);
+    bool exists=fs::exists(status);
+    if(ec&&ec!=std::errc::no_such_file_or_directory)return err(tr("无法访问目标文件。"));
+    if(exists&&!fs::is_regular_file(status))return err(tr("目标不是普通文件。"));
+    unsigned int mode=exists?static_cast<unsigned int>(status.permissions())&0777:0644;
     size_t old_len=0;
     char *old=exists?read_bytes(full,FILE_LIMIT,&old_len):NULL;
     if(exists&&!old)return err(tr("无法读取原文件或原文件过大。"));
@@ -271,7 +238,7 @@ static J *file_write(App *a,J *args,const char *preview){
     strcpy(parent,full);
     char *slash=strrchr(parent,'/');
     if(slash&&slash!=parent)*slash=0;
-    if(mkdirs(parent,0755)||atomic_file(full,content,n,exists?(st.st_mode&0777):0644))return err(tr("写入文件失败。"));
+    if(mkdirs(parent,0755)||atomic_file(full,content,n,mode))return err(tr("写入文件失败。"));
     latest=read_bytes(full,FILE_LIMIT,&latest_len);
     bool verified=latest&&latest_len==n&&!memcmp(latest,content,n);
     free(latest);
@@ -376,7 +343,13 @@ J *schemas(App *a){
     definition(tools,"read_file","Read a complete UTF-8 file (max 64 KB) and its SHA256. Required before editing an existing file; search snippets are not sufficient.",path,1);
     definition(tools,"edit_file","Replace one unique exact text occurrence in an existing file. Prefer this for small edits. Supply SHA256 from read_file; use longer old_text if ambiguous. Preserves other bytes and creates a backup. Result verified means bytes were read back, not that the user's goal or tests passed.",edit,4);
     definition(tools,"write_file","Create a UTF-8 file or replace its entire contents. Prefer edit_file for small changes. Read existing file first and supply SHA256; null only for a new file. Original bytes are backed up and new bytes read back. Verify the task's actual behavior separately.",write,3);
-    if(a->shell)definition(tools,"run_shell","Execute noninteractive bash in workspace, 30s timeout, no sandbox. Do not start persistent/background services. Separate calls do not preserve cd or variables. Inspect exit_code, timed_out and output; on failure diagnose and change approach rather than repeating. A successful command alone does not prove task completion.",cmd,1);
+    if(a->shell)definition(tools,"run_shell",
+#ifdef _WIN32
+        "Execute noninteractive Windows PowerShell in the workspace, 30s timeout. Use PowerShell syntax, not bash. There is no sandbox. Calls do not share variables or working-directory changes. Do not start persistent/background services. Inspect exit_code, timed_out and output to verify the result.",
+#else
+        "Execute noninteractive bash in workspace, 30s timeout, no sandbox. Do not start persistent/background services. Separate calls do not preserve cd or variables. Inspect exit_code, timed_out and output; on failure diagnose and change approach rather than repeating. A successful command alone does not prove task completion.",
+#endif
+        cmd,1);
     if(a->desktop){
         definition(tools,"desktop_snapshot","Read apps with empty app, then exact app name for controls. Text is sent to model API.",app,1);
         definition(tools,"desktop_action","Invoke an action advertised by current snapshot. Re-snapshot after action.",act,2);

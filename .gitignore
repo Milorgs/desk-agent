@@ -7,3 +7,8 @@ build/
 *.o
 *.a
 *.so
+
+/vcpkg_installed/
+/dist/
+*.exe
+*.pdb

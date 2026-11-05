@@ -251,9 +251,7 @@ constexpr Translation catalog[]={
     {"无法继续此任务，或当前活动任务已满。","Cannot continue this task, or all active task slots are in use."},
 };
 std::string preference_path(){
-    const char *xdg=getenv("XDG_CONFIG_HOME");
-    std::string root=xdg&&*xdg?xdg:std::string(getenv("HOME")?getenv("HOME"):".")+"/.config";
-    return root+"/desk-agent/ui.json";
+    return config_base()+"/desk-agent/ui.json";
 }
 }
 const char *tr(const char *text){
@@ -273,7 +271,7 @@ bool language_init(int argc,char **argv){
     std::string path=preference_path();
     char *text=read_bytes(path.c_str(),4096,nullptr);
     if(text){JsonPtr pref(json_tokener_parse(text));free(text);set_language(sget(pref.get(),"language"));}
-    const char *choice=getenv("DESK_LANG");
+    const char *choice=env_value("DESK_LANG");
     for(int i=1;i<argc;i++)if(!strcmp(argv[i],"--lang")){
         if(i+1>=argc)return false;
         choice=argv[++i];

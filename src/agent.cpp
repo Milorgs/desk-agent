@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <ctype.h>
 #include <algorithm>
 void reset_session(App *a){
@@ -286,12 +288,9 @@ int run_task(App *a,const char *task){
 }
 void save_record(App *a){
     char base[PATH_MAX],directory[PATH_MAX],path[PATH_MAX],id[33],leaf[48];
-    const char *state=getenv("XDG_STATE_HOME");
-    if(state&&*state){
-        if(strlen(state)>=sizeof base)return;
-        strcpy(base,state);
-    }
-    else if(path_suffix(base,getenv("HOME")?getenv("HOME"):".","/.local/state"))return;
+    std::string state_path=state_base();
+    if(state_path.size()>=sizeof base)return;
+    strcpy(base,state_path.c_str());
     if(path_suffix(directory,base,"/desk-agent/sessions"))return;
     id_string(id);
     snprintf(leaf,sizeof leaf,"/%s.json",id);
