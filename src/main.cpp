@@ -410,7 +410,7 @@ static int menu(App *a){
                 putchar('\n');
             }
         }
-        if(*sget(a->config,"model"))printf(tr("  当前模型：%s / %s\n"),sget(a->config,"profile"),sget(a->config,"model"));
+        if(*sget(a->config,"model"))printf(tr("  当前模型：%s\n"),sget(a->config,"model"));
         else puts(tr("  当前模型：未配置"));
         if(*sget(a->config,"model")||!usage)show_token_usage(usage.get(),a->config);
         puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [0] 退出"));

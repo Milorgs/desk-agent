@@ -14,7 +14,7 @@ constexpr Translation catalog[]={
     {"  累计 Token（接口报告）：%llu\n","  Lifetime tokens (reported by API): %llu\n"},
     {"  已导入的模型","  Imported models"},
     {"    暂无已导入的模型","    No imported models"},
-    {"  当前模型：%s / %s\n","  Current model: %s / %s\n"},
+    {"  当前模型：%s\n","  Current model: %s\n"},
     {"  当前模型：未配置","  Current model: not configured"},
     {"新对话","New conversation"},
     {"\n对话：%s\n","\nConversation: %s\n"},

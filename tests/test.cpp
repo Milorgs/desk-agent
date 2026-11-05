@@ -1159,7 +1159,7 @@ static void test_conversation_picker(void){
     CHECK(terminal_until(master,output,"Lifetime tokens (reported by API): 0"));
     CHECK(output.find("Imported models")!=std::string::npos);
     CHECK(output.find("2. alternate-model · 0 Token")!=std::string::npos);
-    CHECK(output.find("Current model: conversation-picker / model-test")!=std::string::npos);
+    CHECK(output.find("Current model: model-test")!=std::string::npos);
     type_terminal(master,output,"1\n1\n"+first+"\n");CHECK(terminal_until(master,output,"REPLY_ONE"));wait_for_chat_prompt(master,output,"REPLY_ONE");
     CHECK(write(master,"\x04",1)==1);output.clear();
     CHECK(terminal_until(master,output,"5. 整理比赛资料"));CHECK(terminal_until(master,output,"Select a number:"));
