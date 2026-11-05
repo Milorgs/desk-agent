@@ -1,5 +1,6 @@
 #include "desk.hpp"
 #include "tasks.hpp"
+#include "mcp.hpp"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -194,6 +195,7 @@ static void show_result(const char *name,J *r,double elapsed){
     }
 }
 static const char *activity(const char *name){
+    if(!strncmp(name,"mcp_",4))return tr("正在调用 MCP 工具…");
     if(!strcmp(name,"read_file"))return tr("正在读取文件…");
     if(!strcmp(name,"list_files"))return tr("正在查看目录…");
     if(!strcmp(name,"search_text"))return tr("正在搜索…");
@@ -234,6 +236,7 @@ int run_task(App *a,const char *task){
     add(a->messages,user);
     a->state="执行中";
     a->error[0]=0;
+    if(!mcp_prepare(*a)){a->state="失败";return -1;}
     JsonPtr tool_owner(schemas(a));
     J *tools=tool_owner.get();
     std::vector<FailedOperation> unresolved;

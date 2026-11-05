@@ -1,5 +1,6 @@
 #include "desk.hpp"
 #include "tasks.hpp"
+#include "mcp.hpp"
 #include <curl/curl.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -1259,11 +1260,76 @@ static void test_background_conversations(){
     }
     app_cleanup(&a);
 }
-int main(void){
+static int mcp_fixture(){
+    char *line=nullptr;size_t capacity=0;
+    while(getline(&line,&capacity,stdin)>0){
+        JsonPtr message(json_tokener_parse(line));const char *method=sget(message.get(),"method");
+        if(!*method||!get(message.get(),"id"))continue;
+        JsonPtr response(obj());put(response.get(),"jsonrpc",str("2.0"));put(response.get(),"id",copy(get(message.get(),"id")));
+        J *result=obj();
+        if(!strcmp(method,"initialize")){
+            puts("{\"jsonrpc\":\"2.0\",\"id\":\"server-ping\",\"method\":\"ping\"}");
+            put(result,"protocolVersion",str("2025-06-18"));J *capabilities=obj();put(capabilities,"tools",obj());put(result,"capabilities",capabilities);
+        }else if(!strcmp(method,"tools/list")){
+            bool second=*sget(get(message.get(),"params"),"cursor");
+            J *tools=arr(),*tool=obj();put(tool,"name",str(second?"fail":"echo"));
+            put(tool,"description",str("MCP fixture"));
+            J *schema=json_tokener_parse("{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"object\"}},\"required\":[\"value\"]}");
+            put(tool,"inputSchema",schema);add(tools,tool);put(result,"tools",tools);
+            if(!second)put(result,"nextCursor",str("next"));
+        }else if(!strcmp(method,"tools/call")){
+            J *params=get(message.get(),"params");
+            put(result,"isError",json_object_new_boolean(!strcmp(sget(params,"name"),"fail")));
+            put(result,"structuredContent",copy(get(params,"arguments")));
+            put(result,"pid",json_object_new_int(getpid()));
+            put(result,"inheritedSecret",json_object_new_boolean(getenv("MCP_TEST_SECRET")!=nullptr));
+            put(result,"explicitEnv",str(getenv("EXPLICIT_VALUE")));
+            J *content=arr(),*item=obj();put(item,"type",str("text"));put(item,"text",str("MCP_ECHO_OK"));add(content,item);put(result,"content",content);
+        }else{put(result,"unexpected",str(method));}
+        put(response.get(),"result",result);puts(json_object_to_json_string_ext(response.get(),JSON_C_TO_STRING_PLAIN));fflush(stdout);
+    }
+    free(line);return 0;
+}
+static void test_mcp(){
+    App a=fresh();JsonPtr servers(obj()),entry(obj());
+    put(entry.get(),"command",str(path_text(fs::read_symlink("/proc/self/exe")).c_str()));
+    J *arguments=arr();add(arguments,str("--mcp-fixture"));put(entry.get(),"args",arguments);
+    J *environment=obj();put(environment,"EXPLICIT_VALUE",str("explicit-test-value"));put(entry.get(),"env",environment);
+    put(servers.get(),"fixture",entry.release());CHECK(mcp_save(a,servers.get()));
+    char path[PATH_MAX];CHECK(!path_suffix(path,a.config_dir,"/mcp.json"));struct stat mode{};CHECK(!stat(path,&mode));CHECK((mode.st_mode&0777)==0600);
+    JsonPtr invalid(copy(servers.get()));put(get(invalid.get(),"fixture"),"disabled",str("false"));CHECK(!mcp_save(a,invalid.get()));
+    JsonPtr loaded(mcp_load(a));CHECK(json_object_equal(loaded.get(),servers.get()));
+    CHECK(!path_suffix(path,a.root,"/import.json"));const char *duplicate="{\"mcpServers\":{\"fixture\":{\"command\":\"bad\"}}}";CHECK(!atomic_file(path,duplicate,strlen(duplicate),0600));CHECK(!mcp_import(a,path));
+    const char *additional="{\"mcpServers\":{\"remote\":{\"url\":\"https://example.invalid/mcp\",\"disabled\":true}}}";
+    CHECK(!atomic_file(path,additional,strlen(additional),0600));CHECK(mcp_import(a,path));
+    loaded.reset(mcp_load(a));CHECK(json_object_object_length(loaded.get())==2);
+    setenv("MCP_TEST_SECRET","must-not-leak",1);CHECK(mcp_prepare(a));unsetenv("MCP_TEST_SECRET");
+    JsonPtr tools(mcp_tools(a));CHECK(alen(tools.get())==2);std::string echo,fail;
+    for(size_t i=0;i<alen(tools.get());i++){
+        J *function=get(at(tools.get(),i),"function");
+        if(strstr(sget(function,"description")," / echo."))echo=sget(function,"name");else fail=sget(function,"name");
+    }
+    CHECK(!echo.empty()&&!fail.empty());CHECK(echo.size()<=64);
+    JsonPtr input(json_tokener_parse("{\"value\":{\"count\":3,\"ok\":true,\"list\":[1,2]}}"));
+    a.yes=false;JsonPtr denied(mcp_call(a,echo.c_str(),input.get()));CHECK(bget(denied.get(),"denied"));
+    a.yes=true;JsonPtr result(mcp_call(a,echo.c_str(),input.get()));CHECK(!tool_failed(result.get()));
+    CHECK(json_object_equal(get(result.get(),"structuredContent"),input.get()));CHECK(!bget(result.get(),"inheritedSecret"));
+    CHECK(!strcmp(sget(result.get(),"explicitEnv"),"explicit-test-value"));pid_t child=iget(result.get(),"pid",0);CHECK(child>0);
+    JsonPtr failed(mcp_call(a,fail.c_str(),input.get()));CHECK(tool_failed(failed.get()));
+    CHECK(!workflow(&a,{model_tool("external",echo.c_str(),copy(input.get())),model_reply(nullptr,"MCP model integration complete")}));
+    JsonPtr request(capture(&a,0));J *defs=get(get(request.get(),"body"),"tools");CHECK(alen(defs)==8);
+    JsonPtr follow(capture(&a,1));J *messages=get(get(follow.get(),"body"),"messages");CHECK(strstr(sget(at(messages,alen(messages)-1),"content"),"MCP_ECHO_OK"));
+    mcp_close(a);CHECK(kill(child,0)<0&&errno==ESRCH);
+    put(get(loaded.get(),"fixture"),"disabled",json_object_new_boolean(true));CHECK(mcp_save(a,loaded.get()));CHECK(mcp_prepare(a));tools.reset(mcp_tools(a));CHECK(alen(tools.get())==0);
+    app_cleanup(&a);
+}
+int main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"--mcp-fixture"))return mcp_fixture();
     curl_global_init(CURL_GLOBAL_DEFAULT);
     char directory[]="/tmp/desk-c-test-XXXXXX";
     CHECK(mkdtemp(directory));
     strcpy(sandbox,directory);
+    test_mcp();
     test_approval_modes();
     test_reasoning_modes();
     test_assisted_worker();

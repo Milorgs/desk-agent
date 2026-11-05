@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "mcp.hpp"
 #include "tasks.hpp"
 #include <openssl/evp.h>
 #include <sys/stat.h>
@@ -360,9 +361,12 @@ J *schemas(App *a){
         definition(tools,"desktop_action","Invoke an action advertised by current snapshot. Re-snapshot after action.",act,2);
         definition(tools,"desktop_set_text","Replace entire editable control text. Re-snapshot to verify.",text,2);
     }
+    JsonPtr external(mcp_tools(*a));
+    for(size_t i=0;i<alen(external.get());i++)add(tools,copy(at(external.get(),i)));
     return tools;
 }
 J *tool_call(App *a,const char *name,J *args){
+    if(!strncmp(name,"mcp_",4))return mcp_call(*a,name,args);
     J *defs=schemas(a),*spec=NULL;
     for(size_t i=0;i<alen(defs);i++){
         J *f=get(at(defs,i),"function");

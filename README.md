@@ -2,7 +2,7 @@
 
 Linux / Windows AI 电脑助手。在终端输入 `desk`，用自然语言搜索和修改文件、执行命令，或通过桌面控件操作应用。支持保存多套模型配置，切换 OpenAI接口和 Anthropic接口。
 
-当前版本 **1.5.21**。新增本次运行内的对话列表、自动标题与重命名。修复中文退格、长行编辑和输入残留，任务执行时提前输入的文字会保留到下一轮。操作过程默认显示简短进度，主菜单使用数字 0 退出。新增六档推理选择与三种批准模式。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 集成测试使用本地模拟服务，真实模型和真实桌面操作仍需用户环境联调。
+当前版本 **1.6.0**。新增 MCP 数字菜单，支持导入 JSON 配置与直接添加远程地址，模型可调用导入的工具。支持本次运行内的对话列表、自动标题与重命名。修复中文退格、长行编辑和输入残留，任务执行时提前输入的文字会保留到下一轮。操作过程默认显示简短进度，主菜单使用数字 0 退出。新增六档推理选择与三种批准模式。新增原生 Windows x64 支持：PowerShell 命令、独立工作进程、UI Automation 桌面控件和用户私有配置。交互操作统一使用数字菜单。支持中英文界面切换，不再额外添加系统提示或语言要求。支持多个独立任务并行执行、切换确认和继续对话。增加文本搜索和局部修改，显示实际操作及结果，检测重复读取，并防止无关操作的成功掩盖此前的失败。API 与 MCP 集成测试使用本地模拟服务，真实服务和真实桌面操作仍需用户环境联调。
 
 ## Windows 安装
 
@@ -49,6 +49,7 @@ make
 [2] 选择模型
 [3] 添加模型
 [4] 设置
+[5] MCP 服务
 [0] 退出
 ```
 
@@ -99,6 +100,7 @@ Linux 下进入「开始对话」后，终端顶部显示各对话的运行状�
 [5] 推理模式
 [6] 批准模式
 [7] 返回选择对话
+[8] MCP 服务
 [0] 返回输入
 ```
 
@@ -167,6 +169,38 @@ desk --verbose
 
 任务模型配置通过本机匿名管道传递，密钥不会放进任务命令行或临时配置文件。任务状态、输出和对话默认只在内存中，退出后不恢复；只有显式使用 `--record` 才会记录任务会话。控制端异常退出或强制杀进程不保证完整收尾。
 
+## MCP 工具
+
+在主菜单选 `[5] MCP 服务`，或在对话的 `/` 菜单里选 `[8] MCP 服务`。可导入 JSON 配置文件，也可直接添加远程 MCP 地址与可选的 Bearer Token。选择已导入的服务，可以测试连接、查看工具、启用/停用或删除。
+
+配置示例中的本地程序需要提前安装。导入不会安装依赖或启动服务，连接测试会执行配置中的命令或访问服务地址。
+
+```json
+{
+  "mcpServers": {
+    "local-tools": {
+      "command": "/absolute/path/to/mcp-server",
+      "args": [],
+      "env": {},
+      "cwd": "/absolute/path/to/workspace"
+    },
+    "remote-tools": {
+      "url": "https://example.com/mcp",
+      "headers": {"Authorization": "Bearer YOUR_TOKEN"},
+      "disabled": true
+    }
+  }
+}
+```
+
+Linux 支持 stdio 和 Streamable HTTP。远程支持 JSON 与 SSE 响应、分页发现工具、会话标识和手动认证头。采用 MCP 2025-06-18 协议，可协商 2025-03-26 和 2024-11-05。旧版独立 SSE 地址、OAuth 自动登录、资源/提示词浏览及服务器发起的采样暂未实现。Windows 当前仅支持远程连接，本地 stdio 尚未移植。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)。
+
+配置保存在本机 `settings.json` 同目录的 `mcp.json`，权限为 600。重复名称会拒绝导入，避免覆盖已有配置。服务器的 `env` 和认证头不会作为工具定义发给模型。本地服务只继承常见路径/语言环境及明确配置的 `env`。每个对话建立独立连接，修改配置在下一条需求开始时生效。
+
+“请求批准”和“帮我批准”模式都会确认本地服务启动及 MCP 工具调用。“完全访问权限”允许直接执行。MCP 服务按自身权限访问资源，工具结果会发送到当前模型 API。网络失败不会自动重发工具操作，取消远程请求后，远程服务可能仍在执行。服务器返回的工具说明和工具参数会提供给模型，服务端额外的 instructions 不会添加到系统提示中。
+
+每次最多导入 16 个服务、发现 128 个工具。配置文件上限 256 KB，单次响应上限 4 MB。可为服务设置 `timeoutMs`，范围为 1000–300000，默认 60000。工具列表在连接建立时读取，服务端工具发生变化后可重启 desk 重新连接。
+
 ## 配置与迁移
 
 新版配置在 Linux 默认位于 `~/.config/desk-agent/settings.json`，权限 600；Windows 默认位于 `%LOCALAPPDATA%\desk-agent\settings.json`，文件访问权限限制为当前用户和 SYSTEM。支持 `XDG_CONFIG_HOME` 覆盖。配置包含每套模型的密钥，只保存在实际运行程序的用户电脑；语言偏好单独保存在同目录 `ui.json`。
@@ -194,10 +228,13 @@ Anthropic 配置支持 `max_tokens`（默认 4096）和 `anthropic_version`（�
 
 ```sh
 make test
+make test-mcp-http # 可选：需 Python 3，仅用于本地模拟测试，运行 desk 无需 Python
 make sanitize
 ```
 
 测试覆盖中文搜索和局部修改、备份与冲突、SHA256、配置迁移、模型隔离、文件路径限制、命令超时和进程清理、上下文边界、数字菜单，以及两种 API 的工具循环。模拟接口还检查失败恢复、重复调用停止、损坏的参数 JSON 整轮拒绝，以及 Anthropic 认证头、多工具结果合并、错误标记和签名内容保留。
+
+MCP 测试覆盖 stdio 启动和清理、嵌套参数、工具分页、批准拒绝、配置权限及环境变量隔离。`test-mcp-http` 从实际数字菜单测试 JSON 导入、远程地址添加、JSON/SSE 响应、会话和认证头、服务器 ping，以及 OpenAI/Anthropic 的完整调用循环。所有测试仅使用本机模拟服务与临时凭据。
 
 ## 源码结构
 
@@ -205,6 +242,7 @@ make sanitize
 src/main.cpp     菜单、配置向导、对话与参数
 src/config.cpp   原子 JSON 配置及旧配置迁移
 src/api.cpp      libcurl 传输与双接口适配
+src/mcp.*        MCP 配置、stdio/HTTP 连接与工具调用
 src/i18n.cpp     界面翻译与独立语言偏好
 src/tasks.cpp    Linux 进程任务管理、终端与资源协调
 src/tasks_ui.cpp 后台对话设置同步
@@ -219,6 +257,7 @@ src/platform.*   UTF-8 路径、目录和环境适配
 src/windows/     Windows 文件、进程、任务及 UI Automation
 src/desk.hpp     模块接口
 tests/test.cpp   Linux 自动化测试及 HTTP 模拟服务
+tests/mcp_http.py MCP 数字菜单与远程连接端到端测试
 tests/windows.cpp Windows 原生集成测试
 windows/        安装脚本、清单和发行包说明
 CMakeLists.txt  跨平台 CMake 构建，Windows 依赖使用 vcpkg

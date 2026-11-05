@@ -3,6 +3,8 @@ build/
 .env.*
 !.env.example
 .desk-agent/
+mcp.json
+.mcp.json
 *.local.toml
 *.o
 *.a

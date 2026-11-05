@@ -1,5 +1,6 @@
 #include "desk.hpp"
 #include "tasks.hpp"
+#include "mcp.hpp"
 #include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -439,10 +440,64 @@ public:
     }
 };
 #endif
+static void mcp_menu(App *a,Tasks &jobs){
+    std::string notice;
+    for(;;){
+        clear_page();puts(tr("\nMCP 服务"));
+        if(!notice.empty()){puts(notice.c_str());notice.clear();}
+        JsonPtr servers(mcp_load(*a));
+        if(!servers){fprintf(stderr,"%s\n",a->error);return;}
+        std::vector<std::string> names;
+        json_object_object_foreach(servers.get(),name,entry){
+            names.emplace_back(name);
+            printf("  [%zu] %s · %s · %s\n",names.size(),name,*sget(entry,"url")?"HTTP":"stdio",tr(bget(entry,"disabled")?"已停用":"已启用"));
+        }
+        int count=static_cast<int>(names.size());
+        printf(tr("\n  [%d] 导入 JSON 配置文件\n  [%d] 添加远程 MCP 地址\n  [0] 返回\n"),count+1,count+2);
+        int choice=number(jobs,count+2);if(choice<=0)return;
+        a->error[0]=0;
+        if(choice==count+1){
+            std::string path=request_text(jobs,tr("配置文件路径（空行取消）："));if(path.empty())continue;
+            if(path.starts_with("~/")){const char *home=env_value("HOME");if(home)path=std::string(home)+path.substr(1);}
+            auto file=fs_path(path);if(file.is_relative())file=fs_path(a->root)/file;
+            notice=mcp_import(*a,path_text(file).c_str())?tr("MCP 配置已导入，下一条需求生效。"):a->error;
+        }else if(choice==count+2){
+            std::string name=request_text(jobs,tr("服务名称（空行取消）："));if(name.empty())continue;
+            if(get(servers.get(),name.c_str())){notice=tr("服务名称已存在。");continue;}
+            std::string url=request_text(jobs,tr("MCP 地址（空行取消）："));if(url.empty())continue;
+            std::unique_ptr<char,decltype(&free)> token(input(tr("Bearer Token（可留空，输入隐藏）："),nullptr,true),free);
+            if(!token)continue;
+            JsonPtr entry(obj());put(entry.get(),"url",str(url.c_str()));
+            if(*token){J *headers=obj();put(headers,"Authorization",str((std::string("Bearer ")+token.get()).c_str()));put(entry.get(),"headers",headers);}
+            put(servers.get(),name.c_str(),entry.release());
+            notice=mcp_save(*a,servers.get())?tr("MCP 配置已导入，下一条需求生效。"):a->error;
+        }else{
+            const std::string name=names[static_cast<size_t>(choice-1)];J *entry=get(servers.get(),name.c_str());
+            clear_page();printf("\n  MCP · %s\n",name.c_str());
+            puts(tr("  [1] 测试连接并列出工具\n  [2] 切换启用/停用\n  [3] 删除服务\n  [0] 返回"));
+            puts(tr("连接测试会启动配置中的本地程序，或连接远程服务。"));
+            int action=number(jobs,3);
+            if(action==1){
+                if(mcp_prepare(*a,true,name.c_str())){
+                    JsonPtr tools(mcp_tools(*a));printf(tr("连接成功，共 %zu 个工具。\n"),alen(tools.get()));
+                    for(size_t i=0;i<alen(tools.get());i++)printf("  %.*s\n",180,sget(get(at(tools.get(),i),"function"),"description"));
+                }else fprintf(stderr,"%s\n",a->error);
+                mcp_close(*a);puts(tr("  [0] 返回"));number(jobs,0);
+            }else if(action==2){
+                put(entry,"disabled",json_object_new_boolean(!bget(entry,"disabled")));
+                notice=mcp_save(*a,servers.get())?tr("MCP 设置已保存，下一条需求生效。"):a->error;
+            }else if(action==3){
+                puts(tr("删除此 MCP 配置？\n  [1] 确认删除\n  [0] 取消"));
+                if(number(jobs,1)==1){json_object_object_del(servers.get(),name.c_str());notice=mcp_save(*a,servers.get())?tr("MCP 配置已删除。"):a->error;}
+            }
+        }
+        if(interrupted==SIGTERM||input_closed)return;
+    }
+}
 static int chat_menu(App *a,Tasks &jobs){
     clear_page();
-    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [0] 返回输入"));
-    int choice=number(jobs,7);if(choice<=0)return 0;
+    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"));
+    int choice=number(jobs,8);if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)settings_menu(a,jobs);
@@ -455,6 +510,7 @@ static int chat_menu(App *a,Tasks &jobs){
     else if(choice==5)reasoning_menu(a,jobs);
     else if(choice==6)approval_menu(a,jobs);
     else if(choice==7)return 2;
+    else if(choice==8)mcp_menu(a,jobs);
     return interrupted==SIGTERM?-1:1;
 }
 static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
@@ -661,8 +717,8 @@ static int menu(App *a){
             }else puts(tr("  当前模型：未配置"));
         }
         if(!usage&&(active_listed||!*active_model))puts(tr("  无法读取累计 Token 用量。"));
-        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 设置\n  [0] 退出"));
-        int choice=number(jobs,4);
+        puts(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 设置\n  [5] MCP 服务\n  [0] 退出"));
+        int choice=number(jobs,5);
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
         int rc=0;
@@ -670,6 +726,7 @@ static int menu(App *a){
         else if(choice==2)rc=select_model(a,jobs);
         else if(choice==3)rc=add_model(a,nullptr);
         else if(choice==4)settings_menu(a,jobs);
+        else if(choice==5)mcp_menu(a,jobs);
         if(rc)notice=a->error;
         if(interrupted==SIGTERM)return 143;
     }

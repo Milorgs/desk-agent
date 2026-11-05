@@ -1,5 +1,6 @@
 #include "desk.hpp"
 #include "tasks.hpp"
+#include "mcp.hpp"
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -108,6 +109,7 @@ void seterr(App *a,const char *m){
 double monotime(){return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();}
 void id_string(char out[33]){unsigned char bytes[16];if(RAND_bytes(bytes,16)!=1)throw std::runtime_error("Random generation failed");for(size_t i=0;i<16;i++)snprintf(out+i*2,3,"%02x",bytes[i]);}
 void app_cleanup(App *a){
+    mcp_close(*a);
     desktop_destroy(a);
     json_object_put(a->store);
     json_object_put(a->config);

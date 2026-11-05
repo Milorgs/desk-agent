@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.5.21"
+#define VERSION "1.6.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -39,6 +39,7 @@ struct App {
     std::intptr_t task_events=-1;
     const char *state="等待任务";
     void *desktop_data=nullptr;
+    void *mcp_data=nullptr;
 };
 extern std::atomic<int> interrupted;
 extern std::atomic<bool> input_closed;

@@ -8,17 +8,19 @@ LDLIBS += $(shell pkg-config --libs $(PKGS) $(ATSPI))
 ifneq ($(ATSPI),)
 CPPFLAGS += -DWITH_ATSPI
 endif
-CORE = src/common.cpp src/platform.cpp src/tasks_ui.cpp src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
-.PHONY: all clean test sanitize install
+CORE = src/mcp.cpp src/common.cpp src/platform.cpp src/tasks_ui.cpp src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
+.PHONY: all clean test test-mcp-http sanitize install
 all: build/desk
 build:
 	mkdir -p build
-build/desk: $(CORE) src/main.cpp src/desk.hpp src/tasks.hpp src/platform.hpp | build
+build/desk: $(CORE) src/main.cpp src/desk.hpp src/tasks.hpp src/platform.hpp src/mcp.hpp | build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) $(CORE) src/main.cpp $(LDFLAGS) $(LDLIBS) -lutil -o $@
-build/test: $(CORE) tests/test.cpp src/desk.hpp src/tasks.hpp src/platform.hpp | build
+build/test: $(CORE) tests/test.cpp src/desk.hpp src/tasks.hpp src/platform.hpp src/mcp.hpp | build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARN) $(CORE) tests/test.cpp $(LDFLAGS) $(LDLIBS) -lutil -o $@
 test: build/desk build/test
 	./build/test
+test-mcp-http: build/desk
+	python3 tests/mcp_http.py
 sanitize:
 	$(MAKE) clean
 	$(MAKE) test CXXFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' LDFLAGS='-fsanitize=address,undefined'
