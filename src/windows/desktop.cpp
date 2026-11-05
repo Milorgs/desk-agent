@@ -68,7 +68,7 @@ J *desktop_act(App *app,const char *ref,const char *action,const char *text){
     bool same=SUCCEEDED(entry.element->get_CurrentControlType(&role))&&role==entry.role&&!password(entry.element.Get())&&name_of(entry.element.Get())==entry.name;
     entry.element->get_CurrentIsEnabled(&enabled);desktop_clear(app);if(!same)return err(tr("控件已变化。"));
     HRESULT accepted=E_ACCESSDENIED;
-    if(enabled&&text){ComPtr<IUIAutomationValuePattern> value;BOOL readonly=TRUE;if(SUCCEEDED(entry.element->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&value)))&&SUCCEEDED(value->get_CurrentIsReadOnly(&readonly))&&!readonly){auto replacement=wide(text);accepted=value->SetValue(replacement.c_str());}}
+    if(enabled&&text){ComPtr<IUIAutomationValuePattern> value;BOOL readonly=TRUE;if(SUCCEEDED(entry.element->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&value)))&&SUCCEEDED(value->get_CurrentIsReadOnly(&readonly))&&!readonly){auto replacement=wide(text);BSTR argument=SysAllocStringLen(replacement.data(),static_cast<UINT>(replacement.size()));if(argument){accepted=value->SetValue(argument);SysFreeString(argument);}else accepted=E_OUTOFMEMORY;}}
     else if(enabled&&action){
         if(!strcmp(action,"invoke")){ComPtr<IUIAutomationInvokePattern> pattern;if(SUCCEEDED(entry.element->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&pattern))))accepted=pattern->Invoke();}
         else if(!strcmp(action,"toggle")){ComPtr<IUIAutomationTogglePattern> pattern;if(SUCCEEDED(entry.element->GetCurrentPatternAs(UIA_TogglePatternId,IID_PPV_ARGS(&pattern))))accepted=pattern->Toggle();}
