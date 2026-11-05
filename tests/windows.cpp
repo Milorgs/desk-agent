@@ -8,6 +8,7 @@
 #include <functional>
 static int checks=0;
 #define CHECK(value) do{++checks;if(!(value))throw std::runtime_error(std::string(__FILE__)+":"+std::to_string(__LINE__)+": " #value);}while(0)
+static bool checked(J *result){if(get(result,"error")){std::cerr<<"Tool result: "<<json_object_to_json_string_ext(result,JSON_C_TO_STRING_PLAIN)<<" (Windows error "<<GetLastError()<<")\n";return false;}return true;}
 static std::string executable;
 static fs::path sandbox;
 static int sequence=0;
@@ -80,8 +81,8 @@ static bool private_acl(const fs::path &path){
 }
 static void test_files_config(){
     Fixture fixture;App &app=fixture.app;JsonPtr args(path_args("你好.txt"));put(args.get(),"content",str("第一版\r\nkeep\r\n"));put(args.get(),"expected_sha256",nullptr);
-    JsonPtr result(tool_call(&app,"write_file",args.get()));CHECK(!get(result.get(),"error"));args.reset(path_args("你好.txt"));result.reset(tool_call(&app,"read_file",args.get()));CHECK(!strcmp(sget(result.get(),"content"),"第一版\r\nkeep\r\n"));std::string hash=sget(result.get(),"sha256");
-    put(args.get(),"expected_sha256",str(hash.c_str()));put(args.get(),"old_text",str("第一版"));put(args.get(),"new_text",str("第二版 😀"));result.reset(tool_call(&app,"edit_file",args.get()));CHECK(!get(result.get(),"error"));CHECK(bget(result.get(),"verified"));
+    JsonPtr result(tool_call(&app,"write_file",args.get()));CHECK(checked(result.get()));args.reset(path_args("你好.txt"));result.reset(tool_call(&app,"read_file",args.get()));CHECK(!strcmp(sget(result.get(),"content"),"第一版\r\nkeep\r\n"));std::string hash=sget(result.get(),"sha256");
+    put(args.get(),"expected_sha256",str(hash.c_str()));put(args.get(),"old_text",str("第一版"));put(args.get(),"new_text",str("第二版 😀"));result.reset(tool_call(&app,"edit_file",args.get()));CHECK(checked(result.get()));CHECK(bget(result.get(),"verified"));
     char *backup=read_bytes(sget(result.get(),"backup"),FILE_LIMIT,nullptr);CHECK(backup&&!strcmp(backup,"第一版\r\nkeep\r\n"));free(backup);result.reset(tool_call(&app,"edit_file",args.get()));CHECK(get(result.get(),"error"));
     args.reset(path_args("."));put(args.get(),"query",str("第二版"));result.reset(tool_call(&app,"search_text",args.get()));CHECK(alen(get(result.get(),"matches"))==1);
     char out[PATH_MAX];for(const char *path:{"../outside.txt",".ENV",".git/config","file.txt:stream","CON","hello. ","C:relative.txt","\\\\server\\share\\file"})CHECK(resolve_file(&app,path,out)!=0);
