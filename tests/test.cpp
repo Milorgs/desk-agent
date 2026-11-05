@@ -1154,12 +1154,14 @@ static void test_conversation_picker(void){
     std::string output;
     type_terminal(master,output,"1\n1\n"+first+"\n");CHECK(terminal_until(master,output,"REPLY_ONE"));wait_for_chat_prompt(master,output,"REPLY_ONE");
     CHECK(write(master,"\x04",1)==1);output.clear();
-    CHECK(terminal_until(master,output,"[3] 整理比赛资料"));CHECK(terminal_until(master,output,"Select a number:"));
-    output.clear();type_terminal(master,output,"2\n1\n我的比赛笔记\n");
-    CHECK(terminal_until(master,output,"[3] 我的比赛笔记"));
+    CHECK(terminal_until(master,output,"3. 整理比赛资料"));CHECK(terminal_until(master,output,"Select a number:"));
+    output.clear();type_terminal(master,output,"2\n3\n我的比赛笔记\n");
+    CHECK(terminal_until(master,output,"3. 我的比赛笔记"));
     output.clear();type_terminal(master,output,"0\n2\n2\n1\n1\n"+second+"\n");CHECK(terminal_until(master,output,"REPLY_TWO"));wait_for_chat_prompt(master,output,"REPLY_TWO");
     CHECK(write(master,"\x04",1)==1);output.clear();
-    CHECK(terminal_until(master,output,"[4] Draft a demo video"));CHECK(output.find("[3] 我的比赛笔记")!=std::string::npos);
+    CHECK(terminal_until(master,output,"4. Draft a demo video"));CHECK(output.find("3. 我的比赛笔记")!=std::string::npos);
+    CHECK(terminal_until(master,output,"[2] Rename conversation"));
+    CHECK(output.find("4. Draft a demo video")<output.find("[2] Rename conversation"));
     output.clear();type_terminal(master,output,"3\n"+follow+"\n");
     CHECK(terminal_until(master,output,"Conversation: 我的比赛笔记"));CHECK(terminal_until(master,output,"REPLY_RESUMED"));
     output.clear();type_terminal(master,output,"/\n1\n"+third+"\n");CHECK(terminal_until(master,output,"REPLY_FRESH"));wait_for_chat_prompt(master,output,"REPLY_FRESH");

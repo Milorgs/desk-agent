@@ -341,22 +341,21 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
     while(interrupted!=SIGTERM&&!input_closed){
         int choice=1;
         if(!new_chat){
-            puts(tr("\n选择对话（仅本次运行保留）\n  [1] 新建对话\n  [2] 重命名对话"));
-            for(size_t i=0;i<items.size();i++)printf("  [%zu] %s\n",i+3,title_of(items[i]));
-            puts(tr("  [0] 返回主菜单\n  Ctrl+D 退出"));
+            puts(tr("\n选择对话（仅本次运行保留）"));
+            if(items.empty())puts(tr("还没有对话。"));
+            for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+3,title_of(items[i]));
+            puts(tr("\n  [1] 新建对话\n  [2] 重命名对话\n  [0] 返回主菜单\n  Ctrl+D 退出"));
             choice=number(jobs,static_cast<int>(items.size()+2));
             if(choice<=0)return;
         }
         new_chat=false;
         if(choice==2){
             if(items.empty()){puts(tr("还没有对话。"));continue;}
-            puts(tr("选择要重命名的对话："));
-            for(size_t i=0;i<items.size();i++)printf("  [%zu] %s\n",i+1,title_of(items[i]));
-            puts(tr("  [0] 返回"));
-            int which=number(jobs,static_cast<int>(items.size()));
-            if(which>0){
+            puts(tr("输入上方要重命名的对话编号（0 返回）。"));
+            int which=number(jobs,static_cast<int>(items.size()+2));
+            if(which>=3){
                 auto title=conversation_title(request_text(jobs,tr("新标题（空行取消）：")),false);
-                if(!title.empty())items[static_cast<size_t>(which-1)].title=std::move(title);
+                if(!title.empty())items[static_cast<size_t>(which-3)].title=std::move(title);
             }
             continue;
         }

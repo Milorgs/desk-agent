@@ -9,10 +9,10 @@ constexpr Translation catalog[]={
     {"新对话","New conversation"},
     {"\n对话：%s\n","\nConversation: %s\n"},
     {"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。","Ctrl+D to return to conversations, Ctrl+C to stop the current operation, / for numbered actions."},
-    {"\n选择对话（仅本次运行保留）\n  [1] 新建对话\n  [2] 重命名对话","\nChoose a conversation (this run only)\n  [1] New conversation\n  [2] Rename conversation"},
-    {"  [0] 返回主菜单\n  Ctrl+D 退出","  [0] Main menu\n  Ctrl+D to exit"},
+    {"\n选择对话（仅本次运行保留）","\nChoose a conversation (this run only)"},
+    {"\n  [1] 新建对话\n  [2] 重命名对话\n  [0] 返回主菜单\n  Ctrl+D 退出","\n  [1] New conversation\n  [2] Rename conversation\n  [0] Main menu\n  Ctrl+D to exit"},
     {"还没有对话。","No conversations yet."},
-    {"选择要重命名的对话：","Select a conversation to rename:"},
+    {"输入上方要重命名的对话编号（0 返回）。","Enter a conversation number from above to rename it (0 to go back)."},
     {"新标题（空行取消）：","New title (empty line to cancel): "},
 
     {"输入超过 64 KB，请缩短后重试。","Input exceeds 64 KB. Please shorten it and try again."},
