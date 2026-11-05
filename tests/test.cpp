@@ -895,9 +895,9 @@ static void test_numeric_request(void){
         setenv("DESK_BASE_URL",sget(a.config,"base_url"),1);setenv("DESK_MODEL","model-test",1);setenv("DESK_API_KEY","fake-test-key",1);setenv("DESK_API_TYPE","openai",1);
         execl("./build/desk","desk","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
     }
-    const char *keys="1\n1\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    const char *keys="1\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
     std::string output;CHECK(terminal_until(master,output,"数字需求已收到"));
-    CHECK(write(master,"0\n0\n",4)==4);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    CHECK(write(master,"\n0\n",3)==3);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     server_done(server);JsonPtr request(capture(&a,0));J *messages=get(get(request.get(),"body"),"messages");
     CHECK(alen(messages)==1&&!strcmp(sget(at(messages,0),"role"),"user"));CHECK(!strcmp(sget(at(messages,0),"content"),"1"));
     CHECK(output.find("[y/N]")==std::string::npos&&output.find("/help")==std::string::npos);

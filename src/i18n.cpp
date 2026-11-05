@@ -237,6 +237,8 @@ constexpr Translation catalog[]={
     {"任务及工具结果会发送到配置的 API。","Tasks and tool results are sent to the configured API."},
     {"\n对话\n  [1] 输入需求\n  [2] 新建对话\n  [3] 选择模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 返回主菜单","\nChat\n  [1] Enter a request\n  [2] New conversation\n  [3] Select model\n  [4] Tasks\n  [5] Settings\n  [6] View status\n  [0] Main menu"},
     {"请输入需求（回车返回）：","Enter your request (Enter to go back): "},
+    {"\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [0] 返回输入","\nChat actions\n  [1] New conversation\n  [2] Select model\n  [3] Tasks\n  [4] Settings\n  [5] View status\n  [0] Back to request"},
+    {"请输入需求（回车返回主菜单，输入 / 打开对话操作）：","Enter a request (Enter to return to the main menu, or / for chat actions): "},
     {"\n  desk %s\n  当前模型：%s%s%s\n\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 退出\n","\n  desk %s\n  Model: %s%s%s\n\n  [1] Start chat\n  [2] Select model\n  [3] Add model\n  [4] Tasks\n  [5] Settings\n  [6] View status\n  [0] Exit\n"},
     {"运行 desk 后，使用数字菜单完成对话、任务管理和设置。","Run desk and use the numbered menus for chat, tasks and settings."},
     {"本轮超过上下文预算，请拆分任务或选择新建对话。","This turn exceeds the context budget. Split the task or select New conversation."},

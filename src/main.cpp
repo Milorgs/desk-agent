@@ -251,18 +251,24 @@ static void task_menu(App *a,Tasks &jobs){
         if(interrupted==SIGTERM)return;
     }
 }
+static int chat_menu(App *a,Tasks &jobs){
+    puts(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 任务管理\n  [4] 设置\n  [5] 查看状态\n  [0] 返回输入"));
+    int choice=number(jobs,5);if(choice<=0)return 0;
+    if(choice==1){reset_session(a);puts(tr("已开始新对话。"));}
+    else if(choice==2){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
+    else if(choice==3)task_menu(a,jobs);
+    else if(choice==4)settings_menu(a,jobs);
+    else if(choice==5)status(a);
+    return interrupted==SIGTERM?-1:1;
+}
 static int chat(App *a,Tasks &jobs){
     status(a);
     puts(tr("任务及工具结果会发送到配置的 API。"));
     for(;;){
-        puts(tr("\n对话\n  [1] 输入需求\n  [2] 新建对话\n  [3] 选择模型\n  [4] 任务管理\n  [5] 设置\n  [6] 查看状态\n  [0] 返回主菜单"));
-        int choice=number(jobs,6);if(choice<0)return 0;if(!choice)return 1;
-        if(choice==1){std::string task=request_text(jobs,tr("请输入需求（回车返回）："));if(!task.empty()&&run_task(a,task.c_str()))fprintf(stderr,"%s\n",a->error);}
-        else if(choice==2){reset_session(a);puts(tr("已开始新对话。"));}
-        else if(choice==3){if(select_model(a))fprintf(stderr,"%s\n",a->error);}
-        else if(choice==4)task_menu(a,jobs);
-        else if(choice==5)settings_menu(a,jobs);
-        else if(choice==6)status(a);
+        std::string task=request_text(jobs,": ");
+        if(task.empty())return 1;
+        if(task=="/"){if(chat_menu(a,jobs)<0)return 0;continue;}
+        if(run_task(a,task.c_str()))fprintf(stderr,"%s\n",a->error);
         if(interrupted==SIGTERM)return 0;
     }
 }
