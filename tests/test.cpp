@@ -916,6 +916,7 @@ static void test_task_switch_approval(bool allow=true){
     CHECK(terminal_until(master,output,"[3] 查看完整操作 [0] 取消："));
     output.clear();CHECK(::write(master,allow?"1\n":"2\n",2)==2);
     CHECK(terminal_until(master,output,allow?"已核对":"用户拒绝写入"));
+    CHECK(terminal_until(master,output,allow?"已完成 · 创建文件":"已取消 · 创建文件"));
     if(allow){
         const char *next="再检查文件\n";CHECK(::write(master,next,strlen(next))==static_cast<ssize_t>(strlen(next)));
         CHECK(terminal_until(master,output,"继续检查完成"));
@@ -1411,6 +1412,57 @@ static void test_background_conversations(){
     }
     app_cleanup(&a);
 }
+static void test_picker_approval_status(){
+    App a=fresh();json_object_put(a.config);a.config=config("picker-approval","openai");
+    J *write=args("reviewed.txt");put(write,"content",str("approved"));put(write,"expected_sha256",nullptr);
+    const auto action=model_tool("write","write_file",write),other=model_reply(nullptr,"OTHER_FINISHED"),done=model_reply(nullptr,"CHECKED_FILE");
+    const char *responses[]={action.c_str(),other.c_str(),done.c_str()};
+    pid_t server=fake_server(&a,responses,3,200,1200);CHECK(!save_config(&a,a.config));
+    int master=-1;struct winsize window{30,110,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){setenv("TERM","xterm-256color",1);unsetenv("NO_COLOR");execl("./build/desk","desk","--lang","zh","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    std::string output;type_terminal(master,output,"1\n1\n创建文件\n");
+    CHECK(terminal_until(master,output,"正在思考…"));
+    output.clear();CHECK(::write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"选择对话（仅本次运行保留）"));
+    CHECK(terminal_until(master,output,"待审批：1"));
+    CHECK(terminal_until(master,output,"[1] 等待审批 · 创建文件"));
+    CHECK(output.find("\033[1;93m")!=std::string::npos);
+    const auto path=std::string(a.root)+"/reviewed.txt";CHECK(access(path.c_str(),F_OK)!=0);
+    // A second conversation changes selector numbers, but approvals stay first.
+    output.clear();type_terminal(master,output,"2\n另一任务\n");
+    CHECK(terminal_until(master,output,"执行中 · 另一任务 · 正在思考…"));
+    output.clear();CHECK(::write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"1. 另一任务"));
+    CHECK(terminal_until(master,output,"2. 创建文件"));
+    CHECK(terminal_until(master,output,"\033[2;1H\033[2K\033[1;93m[2] 等待审批 · 创建文件"));
+    output.clear();type_terminal(master,output,"2\n");
+    CHECK(terminal_until(master,output,"[3] 查看完整操作 [0] 取消："));
+    CHECK(access(path.c_str(),F_OK)!=0); // Choosing a chat never approves its operation.
+    output.clear();type_terminal(master,output,"1\n");
+    CHECK(terminal_until(master,output,"执行中 · 创建文件 · 正在思考…"));
+    output.clear();CHECK(::write(master,"\x04",1)==1);
+    CHECK(terminal_until(master,output,"选择对话（仅本次运行保留）"));
+    CHECK(terminal_until(master,output,"[1] 已完成 · 创建文件"));
+    CHECK(terminal_until(master,output,"[2] 已完成 · 另一任务"));
+    CHECK(output.find("CHECKED_FILE")==std::string::npos);
+    CHECK(output.find("fake-test-key")==std::string::npos);
+    output.clear();type_terminal(master,output,"0\n");CHECK(terminal_until(master,output,"[1] 开始对话"));
+    CHECK(output.find("对话运行状态")==std::string::npos);CHECK(::write(master,"0\n",2)==2);
+    int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    server_done(server);char *content=read_bytes(path.c_str(),100,nullptr);CHECK(content&&!strcmp(content,"approved"));free(content);app_cleanup(&a);
+}
+static void test_picker_failed_status(){
+    App a=fresh();json_object_put(a.config);a.config=config("picker-failure","openai");
+    const char *responses[]={"{\"error\":{\"message\":\"fixture rejection\"}}"};
+    pid_t server=fake_server(&a,responses,1,400,1200);CHECK(!save_config(&a,a.config));
+    int master=-1;struct winsize window{24,80,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    std::string output;type_terminal(master,output,"1\n1\nRejected task\n");CHECK(terminal_until(master,output,"Thinking..."));
+    output.clear();CHECK(write(master,"\x04",1)==1);CHECK(terminal_until(master,output,"Choose a conversation (this run only)"));
+    CHECK(terminal_until(master,output,"[1] Failed · Rejected task"));
+    output.clear();type_terminal(master,output,"0\n");CHECK(terminal_until(master,output,"[1] Start chat"));CHECK(write(master,"0\n",2)==2);
+    int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);app_cleanup(&a);
+}
 static int mcp_fixture(){
     char *line=nullptr;size_t capacity=0;
     while(getline(&line,&capacity,stdin)>0){
@@ -1496,6 +1548,8 @@ int main(int argc,char **argv){
     test_conversation_picker();
     test_thinking_timer();
     test_background_conversations();
+    test_picker_approval_status();
+    test_picker_failed_status();
     test_utf8();
     test_files();
     test_search_and_edit();

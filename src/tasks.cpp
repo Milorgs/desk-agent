@@ -33,6 +33,7 @@ struct Job {
     double retired_at=0;
     bool thinking=false;
     double thinking_started=0;
+    double changed_at=0;
     std::string title,workspace,state="执行中",output;
 };
 void drain(Job &j){
@@ -104,6 +105,7 @@ void Tasks::refresh(){
     for(auto &j:impl->jobs){
         char events[128];ssize_t n;
         while((n=read(j.events,events,sizeof events))>0)for(ssize_t k=0;k<n;k++){
+            j.changed_at=monotime();
             if(events[k]=='t'){j.thinking=true;j.thinking_started=monotime();continue;}
             if(events[k]=='e'){j.thinking=false;continue;}
             j.thinking=false;
@@ -120,6 +122,7 @@ void Tasks::refresh(){
         int status=0;
         pid_t ended=waitpid(j.pid,&status,WNOHANG);
         if(ended==j.pid){
+            j.changed_at=monotime();
             j.alive=false;
             if(j.active)j.state=j.cancelled||(WIFEXITED(status)&&WEXITSTATUS(status)==2)?"已取消":WIFEXITED(status)&&WEXITSTATUS(status)==0?"已完成":"失败";
             j.active=false;
@@ -170,21 +173,23 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     body+='\n';
     bool sent=write_all(payload[1],body);
     if(!sent){close(payload[1]);kill(pid,SIGTERM);while(waitpid(pid,nullptr,0)<0&&errno==EINTR){}close(master);close(events[0]);seterr(&app,tr("无法传递任务配置。"));return -1;}
-    Job j;j.id=impl->next++;j.pid=pid;j.master=master;j.events=events[0];j.feed=payload[1];j.title=task;j.workspace=root;
+    Job j;j.id=impl->next++;j.pid=pid;j.master=master;j.events=events[0];j.feed=payload[1];j.title=task;j.workspace=root;j.changed_at=monotime();
     int id=j.id;impl->jobs.push_back(std::move(j));return id;
 }
 J *Tasks::snapshot(){
     refresh();J *items=arr();
     for(const auto &j:impl->jobs){
         if(j.retired)continue;
-        J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));
+        J *v=obj();put(v,"id",json_object_new_int(j.id));put(v,"active",json_object_new_boolean(j.active));put(v,"state",str(tr(j.active&&j.cancelled?"正在停止":j.state.c_str())));put(v,"task",str(j.title.c_str()));put(v,"workspace",str(j.workspace.c_str()));
+        put(v,"awaiting_approval",json_object_new_boolean(j.active&&!j.cancelled&&j.state=="等待确认"));
+        put(v,"changed_at",json_object_new_double(j.changed_at));
         bool thinking=j.thinking&&j.active&&!j.cancelled;
         put(v,"thinking",json_object_new_boolean(thinking));
         put(v,"thinking_seconds",json_object_new_double(thinking?monotime()-j.thinking_started:0));
         add(items,v);
     }return items;
 }
-bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";return kill(j->pid,SIGINT)==0;}
+bool Tasks::cancel(int id){refresh();auto *j=impl->find(id);if(!j||!j->active)return false;j->cancelled=true;j->state="正在停止";j->changed_at=monotime();return kill(j->pid,SIGINT)==0;}
 bool Tasks::remove(int id){
     refresh();auto *j=impl->find(id);if(!j)return false;
     j->retired=true;j->retired_at=monotime();j->cancelled=true;
@@ -200,7 +205,7 @@ bool Tasks::resume(int id,const std::string &task,J *settings){
     JsonPtr message(obj());if(settings)put(message.get(),"settings",copy(settings));put(message.get(),"language",str(language_code()));put(message.get(),"task",str(task.c_str()));
     std::string text=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);if(text.size()>250000)return false;text+='\n';
     if(!write_all(j->feed,text))return false;
-    j->active=true;j->cancelled=false;j->state="执行中";j->title=task;
+    j->active=true;j->cancelled=false;j->state="执行中";j->title=task;j->changed_at=monotime();
     return true;
 }
 char *Tasks::readline(const char *prompt){

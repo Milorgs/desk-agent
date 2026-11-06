@@ -435,22 +435,18 @@ public:
         }
         const bool live_header=pinned&&rows>=10&&columns>=40;
         JsonPtr states(jobs.snapshot());
-        std::string header=tr("对话运行状态");
-        size_t queued=0;for(const auto &item:items)queued+=item.queue.size();
-        if(queued){char label[80];snprintf(label,sizeof label,tr(" · 排队：%zu"),queued);header+=label;}
-        int line=2;
-        for(auto &item:items){
+        struct Activity {const Conversation *item;J *state;size_t number;int priority;};
+        std::vector<Activity> activity;
+        size_t queued=0,approvals=0;
+        for(size_t index=0;index<items.size();index++){
+            auto &item=items[index];queued+=item.queue.size();
             J *state=nullptr;
             for(size_t i=0;i<alen(states.get());i++)if(iget(at(states.get(),i),"id",0)==item.job)state=at(states.get(),i);
-            if(state&&bget(state,"active")){
-                bool thinking=bget(state,"thinking");
-                auto title=live_header&&thinking?clipped(title_of(item),std::max(8,columns-42)):std::string(title_of(item));
-                header+="\n"+std::string(sget(state,"state"))+" · "+title;
-                if(thinking){
-                    header+=" · "+std::string(tr("正在思考…"));
-                    if(live_header)header+=" "+elapsed_label(json_object_get_double(get(state,"thinking_seconds")));
-                }
-                line++;
+            if(state){
+                bool approval=bget(state,"awaiting_approval");
+                if(approval)approvals++;
+                int priority=approval?0:bget(state,"active")?1:!item.queue.empty()?2:3;
+                activity.push_back({&item,state,index+1,priority});
             }
             if(&item==current&&item.job){
                 auto output=jobs.output(item.job);
@@ -464,20 +460,46 @@ public:
                 }
             }
         }
+        // Approval requests remain visible even when several other chats run.
+        std::stable_sort(activity.begin(),activity.end(),[](const auto &left,const auto &right){
+            if(left.priority!=right.priority)return left.priority<right.priority;
+            if(left.priority==3)return json_object_get_double(get(left.state,"changed_at"))>json_object_get_double(get(right.state,"changed_at"));
+            return false;
+        });
+        struct Row {std::string text;bool approval=false;};
+        std::vector<Row> rows_text{{tr("对话运行状态"),approvals>0}};
+        if(approvals){char label[128];snprintf(label,sizeof label,tr(" · 待审批：%zu（进入对应对话处理）"),approvals);rows_text[0].text+=label;}
+        if(queued){char label[80];snprintf(label,sizeof label,tr(" · 排队：%zu"),queued);rows_text[0].text+=label;}
+        for(const auto &entry:activity){
+            if(rows_text.size()==5)break;
+            const auto &item=*entry.item;J *state=entry.state;
+            bool approval=bget(state,"awaiting_approval"),thinking=bget(state,"thinking");
+            const char *status=approval?tr("等待审批"):entry.priority==2?tr("排队中"):sget(state,"state");
+            std::string prefix="["+std::to_string(entry.number)+"] "+status+" · ";
+            auto title=live_header&&thinking?clipped(title_of(item),std::max(4,columns-48)):std::string(title_of(item));
+            std::string text=prefix+title;
+            if(thinking){
+                text+=" · "+std::string(tr("正在思考…"));
+                if(live_header)text+=" "+elapsed_label(json_object_get_double(get(state,"thinking_seconds")));
+            }
+            rows_text.push_back({std::move(text),approval});
+        }
+        std::string header;
+        for(const auto &row:rows_text){if(!header.empty())header+='\n';header+=row.text;}
         if(header==last_header)return;
         last_header=header;
         if(live_header){
             fputs("\0337",stdout);
-            size_t from=0;
             for(int row=1;row<=5;row++){
-                auto end=header.find('\n',from);
-                std::string_view text=from<header.size()?std::string_view(header).substr(from,end==std::string::npos?header.size()-from:end-from):std::string_view{};
-                bool color=terminal_supports_color()&&row==1;
-                printf("\033[%d;1H\033[2K%s%s%s",row,color?"\033[1;94m":"",clipped(text,columns).c_str(),color?"\033[0m":"");
-                from=end==std::string::npos?header.size():end+1;
+                size_t index=static_cast<size_t>(row-1);
+                std::string_view text=index<rows_text.size()?rows_text[index].text:std::string_view{};
+                bool approval=index<rows_text.size()&&rows_text[index].approval;
+                bool color=terminal_supports_color()&&(row==1||approval);
+                const char *style=color?(approval?"\033[1;93m":"\033[1;94m"):"";
+                printf("\033[%d;1H\033[2K%s%s%s",row,style,clipped(text,columns).c_str(),color?"\033[0m":"");
             }
             fputs("\0338",stdout);fflush(stdout);
-        }else if(line>2)terminal_message("\n"+header+"\n");
+        }else if(rows_text.size()>1)terminal_message("\n"+header+"\n");
     }
     bool active(const Conversation &item){
         JsonPtr states(jobs.snapshot());
