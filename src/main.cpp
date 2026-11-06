@@ -213,14 +213,26 @@ static int select_model(App *a,Tasks &jobs){
     menu_text(tr("\n选择模型："));
     json_object_object_foreach(profiles,name,entry){
         order.emplace_back(name);
-        menu_printf("  [%zu] %s (%s)\n",order.size(),sget(entry,"model"),sget(entry,"protocol"));
+        menu_printf("  [%zu] %s (%s)%s\n",order.size(),sget(entry,"model"),sget(entry,"protocol"),same_model(entry,a->config)?tr(" · 当前"):"");
     }
     int count=static_cast<int>(order.size());
     if(count>1)menu_printf(tr("  [%d] 调整模型编号\n"),count+1);
     menu_text(tr("  [0] 返回"));
     int selected=number(jobs,count+(count>1));
     if(selected<=0)return 0;
-    if(selected<=count)return activate(a,order[static_cast<size_t>(selected-1)].c_str());
+    if(selected<=count){
+        int result=activate(a,order[static_cast<size_t>(selected-1)].c_str());
+        if(!result){
+            char message[512];snprintf(message,sizeof message,tr("已选择模型：%s（下次启动默认使用）。"),sget(a->config,"model"));
+            std::string notice=message;
+            JsonPtr states(jobs.snapshot());
+            for(size_t i=0;i<alen(states.get());i++)if(bget(at(states.get(),i),"active")){
+                notice+="\n"+std::string(tr("后续及排队需求使用新模型；正在执行的任务继续使用原模型。"));break;
+            }
+            set_notice(notice);
+        }
+        return result;
+    }
 
     menu_text(tr("输入要调整的模型编号（0 返回）。"));
     int from=number(jobs,count);
@@ -273,7 +285,7 @@ static void model_id_menu(App *a,Tasks &jobs){
     if(model.empty())return;
     JsonPtr candidate(copy(a->config));put(candidate.get(),"model",str(model.c_str()));
     if(save_config(a,candidate.get()))fprintf(stderr,"%s\n",a->error);
-    else set_notice(tr("已保存新模型并清空对话。"));
+    else set_notice(tr("已保存模型设置。"));
 }
 static void approval_menu(App *a,Tasks &jobs){
     clear_page();
@@ -360,6 +372,23 @@ static std::string conversation_title(std::string_view source,bool automatic){
     return title;
 }
 static const char *title_of(const Conversation &item){return item.title.empty()?tr("新对话"):item.title.c_str();}
+
+static void sync_conversation_models(const App &app,std::vector<Conversation> &items){
+    for(auto &item:items){
+        const bool changed=!same_model(item.config.get(),app.config);
+        item.config.reset(copy(app.config));
+        if(changed){
+            if(item.messages)item.messages.reset(arr());
+            item.reset_context=true;
+        }
+        for(auto &request:item.queue)put(request.settings.get(),"config",copy(app.config));
+        if(!item.queue.empty()&&item.reset_context){
+            // Only the first queued request starts a fresh model context.
+            for(size_t i=0;i<item.queue.size();i++)put(item.queue[i].settings.get(),"reset",json_object_new_boolean(i==0));
+            item.reset_context=false;
+        }
+    }
+}
 
 #ifndef _WIN32
 static void advance_conversations(Tasks &jobs,std::vector<Conversation> &items){
@@ -773,9 +802,16 @@ static int menu(App *a){
     std::string notice;
     Tasks jobs;
     std::vector<Conversation> conversations;
+    size_t synced_config=a->config_revision;
+    jobs.on_idle=[&]{
+        if(synced_config!=a->config_revision){
+            sync_conversation_models(*a,conversations);
+            synced_config=a->config_revision;
+        }
 #ifndef _WIN32
-    jobs.on_idle=[&]{advance_conversations(jobs,conversations);};
+        advance_conversations(jobs,conversations);
 #endif
+    };
     for(;;){
         if(input_closed)return 0;
         clear_page();

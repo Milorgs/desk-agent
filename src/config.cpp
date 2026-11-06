@@ -315,8 +315,15 @@ int reorder_models(App *a,const std::vector<std::string> &order){
     a->store=next.release();
     return 0;
 }
+bool same_model(J *left,J *right){
+    if(!left||!right)return left==right;
+    for(const char *field:{"profile","protocol","base_url","model","api_key"})
+        if(strcmp(sget(left,field),sget(right,field)))return false;
+    return true;
+}
 int save_config(App *a,J *c,bool clear_session){
     if(config_valid(a,c))return -1;
+    const bool changed=!same_model(a->config,c);
     J *next=copy(a->store);
     put(next,"active_profile",str(sget(c,"profile")));
     put(get(next,"profiles"),sget(c,"profile"),copy(c));
@@ -326,8 +333,9 @@ int save_config(App *a,J *c,bool clear_session){
     a->store=next;
     json_object_put(a->config);
     a->config=selected;
+    a->config_revision++;
     desktop_clear(a);
-    if(clear_session)reset_session(a);
+    if(clear_session&&changed)reset_session(a);
     return 0;
 }
 int activate(App *a,const char *name){

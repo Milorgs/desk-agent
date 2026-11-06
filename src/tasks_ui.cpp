@@ -16,11 +16,12 @@ J *conversation_settings(const App &app,bool reset){
 }
 void apply_conversation_settings(App &app,J *settings){
     if(!settings)return;
+    bool reset=bget(settings,"reset")||!same_model(app.config,get(settings,"config"));
     desktop_clear(&app);
     json_object_put(app.config);app.config=copy(get(settings,"config"));
     app.yes=bget(settings,"yes");app.auto_edit=bget(settings,"auto_edit");
     app.shell=bget(settings,"shell");app.desktop=bget(settings,"desktop");
     app.record=bget(settings,"record");app.verbose=bget(settings,"verbose");
     app.max_steps=iget(settings,"max_steps",20);
-    if(bget(settings,"reset"))reset_session(&app);
+    if(reset)reset_session(&app);
 }

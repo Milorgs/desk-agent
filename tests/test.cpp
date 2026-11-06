@@ -223,6 +223,9 @@ static void test_config(void){
     CHECK(!activate(&a,"日常助手"));
     CHECK(!strcmp(sget(a.config,"protocol"),"openai"));
     CHECK(!strcmp(sget(a.config,"api_key"),"fake-test-key"));
+    J *kept=obj();put(kept,"role",str("user"));put(kept,"content",str("keep this context"));add(a.messages,kept);
+    const auto revision=a.session_revision;
+    CHECK(!activate(&a,"日常助手"));CHECK(a.session_revision==revision);CHECK(alen(a.messages)==1);
     char path[PATH_MAX];
     CHECK(!path_suffix(path,a.config_dir,"/settings.json"));
     struct stat st;
@@ -1293,11 +1296,11 @@ static void test_conversation_picker(void){
     server_done(server);CHECK(access(state_path,F_OK)!=0);
     for(int i=0;i<4;i++){
         JsonPtr request(capture(&a,i));J *body=get(request.get(),"body"),*messages=get(body,"messages");
-        CHECK(!get(body,"system"));CHECK(alen(messages)==(i==2?3u:1u));
-        CHECK(!strcmp(sget(body,"model"),i==1?"alternate-model":"model-test"));
+        CHECK(!get(body,"system"));CHECK(alen(messages)==1);
+        CHECK(!strcmp(sget(body,"model"),i>0?"alternate-model":"model-test"));
         const std::string expected[]={first,second,follow,third};
         CHECK(expected[i]==sget(at(messages,alen(messages)-1),"content"));
-        if(i==2){CHECK(first==sget(at(messages,0),"content"));CHECK(!strcmp(sget(at(messages,1),"content"),"REPLY_ONE"));}
+        if(i==2)CHECK(follow==sget(at(messages,0),"content"));
     }
     child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
@@ -1463,6 +1466,49 @@ static void test_picker_failed_status(){
     output.clear();type_terminal(master,output,"0\n");CHECK(terminal_until(master,output,"[1] Start chat"));CHECK(write(master,"0\n",2)==2);
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);app_cleanup(&a);
 }
+static void test_model_switch_requests(){
+    App a=fresh();json_object_put(a.config);a.config=config("original","openai");
+    put(a.config,"model",str("original-model"));put(a.config,"api_key",str("original-test-key"));
+    const auto original=model_reply(nullptr,"ORIGINAL_FINISHED");const char *old_replies[]={original.c_str()};
+    pid_t old_server=fake_server(&a,old_replies,1,200,1800);CHECK(!save_config(&a,a.config));
+    App target;CHECK(!path_suffix(target.root,a.root,"/target-api"));CHECK(!mkdirs(target.root,0700));
+    target.config=config("selected","anthropic");put(target.config,"model",str("selected-model"));put(target.config,"api_key",str("selected-test-key"));
+    const char *new_replies[]={
+        "{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"QUEUED_ON_SELECTED\"}]}",
+        "{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"SECOND_QUEUED_ON_SELECTED\"}]}",
+        "{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"FOLLOW_ON_SELECTED\"}]}",
+        "{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"RESTART_ON_SELECTED\"}]}"
+    };
+    pid_t new_server=fake_server(&target,new_replies,4);CHECK(!save_config(&a,target.config));CHECK(!activate(&a,"original"));
+    int master=-1;struct winsize window{40,110,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    std::string output;type_terminal(master,output,"1\n1\noriginal work\n");CHECK(terminal_until(master,output,"Thinking..."));
+    output.clear();type_terminal(master,output,"pending work\npending follow\n/\n2\n2\n");
+    CHECK(terminal_until(master,output,"Selected model: selected-model"));
+    CHECK(terminal_until(master,output,"SECOND_QUEUED_ON_SELECTED"));wait_for_chat_prompt(master,output,"SECOND_QUEUED_ON_SELECTED");
+    CHECK(output.find("ORIGINAL_FINISHED")!=std::string::npos);
+    // Re-entering and reselecting the current model must retain its context.
+    output.clear();CHECK(write(master,"\x04",1)==1);CHECK(terminal_until(master,output,"Choose a conversation (this run only)"));
+    output.clear();type_terminal(master,output,"1\n/\n2\n2\nfollow work\n");
+    CHECK(terminal_until(master,output,"FOLLOW_ON_SELECTED"));wait_for_chat_prompt(master,output,"FOLLOW_ON_SELECTED");
+    leave_chat_and_exit(master);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
+    if(!child){setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
+    output.clear();CHECK(terminal_until(master,output,"selected-model · 0 Token · Current"));
+    type_terminal(master,output,"1\n1\nrestart work\n");CHECK(terminal_until(master,output,"RESTART_ON_SELECTED"));wait_for_chat_prompt(master,output,"RESTART_ON_SELECTED");
+    leave_chat_and_exit(master);CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    server_done(old_server);server_done(new_server);
+    JsonPtr old_request(capture(&a,0));CHECK(!strcmp(sget(old_request.get(),"path"),"/v1/chat/completions"));CHECK(strstr(sget(old_request.get(),"authorization"),"original-test-key"));
+    const char *expected[]={"pending work","pending follow","follow work","restart work"};
+    for(int i=0;i<4;i++){
+        JsonPtr request(capture(&target,i));J *body=get(request.get(),"body"),*messages=get(body,"messages");
+        CHECK(!strcmp(sget(request.get(),"path"),"/v1/messages"));CHECK(!get(request.get(),"authorization"));CHECK(strstr(sget(request.get(),"key"),"selected-test-key"));
+        CHECK(!strcmp(sget(body,"model"),"selected-model"));CHECK(!get(body,"system"));CHECK(alen(messages)==(i==3?1u:static_cast<size_t>(i*2+1)));
+        CHECK(!strcmp(sget(at(get(at(messages,alen(messages)-1),"content"),0),"text"),expected[i]));
+        CHECK(std::string(json_object_to_json_string(messages)).find("original work")==std::string::npos);
+    }
+    app_cleanup(&target);app_cleanup(&a);
+}
 static int mcp_fixture(){
     char *line=nullptr;size_t capacity=0;
     while(getline(&line,&capacity,stdin)>0){
@@ -1550,6 +1596,7 @@ int main(int argc,char **argv){
     test_background_conversations();
     test_picker_approval_status();
     test_picker_failed_status();
+    test_model_switch_requests();
     test_utf8();
     test_files();
     test_search_and_edit();

@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.6.5"
+#define VERSION "1.6.6"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -34,6 +34,7 @@ struct App {
     bool progress_animated=false;
     bool conversation_worker=false;
     size_t session_revision=0;
+    size_t config_revision=0;
     std::string progress_text{};
     double progress_updated=0;
     bool thinking=false;
@@ -100,6 +101,7 @@ int store_load(App *a);
 int config_valid(App *a,J *config);
 J *config_default(const char *name);
 int save_config(App *a,J *config,bool clear_session=true);
+bool same_model(J *left,J *right);
 int activate(App *a,const char *name);
 int config_name_valid(const char *name);
 int api_check(App *a,J *config);

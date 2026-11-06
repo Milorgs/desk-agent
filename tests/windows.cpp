@@ -120,6 +120,23 @@ static void test_parallel(){
     put(app.config,"model",str("model-test"));app.yes=true;Server cancel({response("run_shell",command_args("Start-Sleep -Seconds 30")),response()});cancel.use(app);
     {Tasks tasks(executable);int a=tasks.start(app,"long task");CHECK(a==1);double until=monotime()+8;while(tasks.output(a).find("正在执行命令…")==std::string::npos&&monotime()<until)Sleep(10);CHECK(tasks.output(a).find("正在执行命令…")!=std::string::npos);int b=tasks.start(app,"independent task");CHECK(b==2);CHECK(tasks.cancel(a));CHECK(await(tasks,a,"已取消"));CHECK(await(tasks,b,"已完成"));}cancel.done();
 }
+static void test_model_switch(){
+    Fixture fixture;App &app=fixture.app;
+    Server original({response()});original.use(app);put(app.config,"model",str("original-model"));CHECK(!save_config(&app,app.config));
+    Server selected({"{\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"selected done\"}]}"});
+    JsonPtr next(copy(app.config));put(next.get(),"profile",str("selected"));put(next.get(),"model",str("selected-model"));put(next.get(),"protocol",str("anthropic"));put(next.get(),"api_key",str("selected-test-key"));put(next.get(),"base_url",str(selected.base.c_str()));
+    CHECK(!save_config(&app,next.get()));CHECK(!activate(&app,"windows-test"));
+    {Tasks tasks(executable);int id=tasks.start(app,"original work");CHECK(id>0);CHECK(await(tasks,id,"已完成"));
+        CHECK(!activate(&app,"selected"));JsonPtr settings(conversation_settings(app,false));
+        CHECK(tasks.resume(id,"selected work",settings.get()));CHECK(await(tasks,id,"已完成"));
+    }
+    original.done();selected.done();JsonPtr request(selected.request(0));
+    CHECK(!strcmp(sget(request.get(),"model"),"selected-model"));CHECK(alen(get(request.get(),"messages"))==1);CHECK(!get(request.get(),"system"));
+    CHECK(selected.headers(0).find("x-api-key: selected-test-key")!=std::string::npos);CHECK(selected.headers(0).find("Authorization:")==std::string::npos);
+    J *message=obj();put(message,"role",str("user"));put(message,"content",str("keep this context"));add(app.messages,message);
+    auto revision=app.session_revision;CHECK(!activate(&app,"selected"));CHECK(app.session_revision==revision&&alen(app.messages)==1);
+    App loaded;CHECK(!store_load(&loaded));CHECK(!strcmp(sget(loaded.config,"profile"),"selected"));CHECK(!strcmp(sget(loaded.config,"model"),"selected-model"));app_cleanup(&loaded);
+}
 static void test_removed_tasks(){
     Fixture fixture;App &app=fixture.app;
     Server server(std::vector<std::string>(34,response()));server.use(app);
@@ -148,7 +165,7 @@ int main(int argc,char **argv){
     platform_initialize();WSADATA sockets{};if(WSAStartup(MAKEWORD(2,2),&sockets))return 1;curl_global_init(CURL_GLOBAL_DEFAULT);
     try{
         CHECK(argc==2);executable=argv[1];wchar_t temporary[32768];CHECK(GetTempPathW(32768,temporary)>0);char id[33];id_string(id);sandbox=fs::path(temporary)/(L"desk-test-你好-"+wide(id));CHECK(!mkdirs(path_text(sandbox).c_str(),0700));
-        test_files_config();test_commands();test_api_loops();test_parallel();test_removed_tasks();
+        test_files_config();test_commands();test_api_loops();test_parallel();test_model_switch();test_removed_tasks();
         std::cout<<"PASS: "<<checks<<" Windows checks (UTF-8 files, ACL, PowerShell, cancellation, APIs, parallel tasks, approval, resume).\n";
         fs::remove_all(sandbox);curl_global_cleanup();WSACleanup();return 0;
     }catch(const std::exception &error){std::cerr<<"FAIL: "<<error.what()<<"\n";curl_global_cleanup();WSACleanup();return 1;}
