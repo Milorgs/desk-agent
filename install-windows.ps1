@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = 'Milorgs/desk-agent'
 $asset = "https://github.com/$repo/releases/latest/download/desk-agent-windows-x64.zip"
@@ -12,6 +13,7 @@ try {
     Expand-Archive -LiteralPath $zip -DestinationPath $package -Force
     # The release ZIP contains desk.exe and install.ps1 at its root.
     $installer = Join-Path $package 'install.ps1'
+    if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Invalid desk-agent package.' }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
     if ($LASTEXITCODE -ne 0) { throw "Installation failed (exit code $LASTEXITCODE)." }
 } finally {

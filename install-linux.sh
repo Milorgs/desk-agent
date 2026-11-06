@@ -12,12 +12,16 @@ case "$(uname -m)" in
 esac
 
 download() {
-    if command -v curl >/dev/null 2>&1; then curl -fL --retry 3 --proto '=https' --tlsv1.2 "$1" -o "$2"
-    elif command -v wget >/dev/null 2>&1; then wget -O "$2" "$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 --connect-timeout 15 --proto '=https' --tlsv1.2 "$1" -o "$2"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$2" "$1"
     else echo 'Install curl or wget first.' >&2; exit 1
     fi
 }
 
+command -v tar >/dev/null 2>&1 || { echo 'Install tar first.' >&2; exit 1; }
 download "$asset" "$tmp/desk-agent.tar.gz"
 tar -xzf "$tmp/desk-agent.tar.gz" -C "$tmp"
+[ -f "$tmp/desk-agent-linux-x64/install.sh" ] || { echo 'Invalid desk-agent package.' >&2; exit 1; }
 sh "$tmp/desk-agent-linux-x64/install.sh" --setup-path
