@@ -267,8 +267,8 @@ static void language_menu(App *a,Tasks &jobs){
     clear_page();
     menu_text(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
     int choice=number(jobs,2);
-    if(choice==1&&save_language(*a,"zh")&&interface_active)set_notice(tr("语言已切换为简体中文。"));
-    else if(choice==2&&save_language(*a,"en")&&interface_active)set_notice(tr("语言已切换为 English。"));
+    if(choice==1&&save_language(*a,"zh"))set_notice(tr("语言已切换为简体中文。"));
+    else if(choice==2&&save_language(*a,"en"))set_notice(tr("语言已切换为 English。"));
 }
 static void model_id_menu(App *a,Tasks &jobs){
     clear_page();

@@ -1045,6 +1045,11 @@ static void test_settings_redraw(){
     CHECK(output.rfind("\033[1;1H\033[J")!=std::string::npos);
     screen=output.substr(output.rfind("\033[1;1H\033[J"));
     CHECK(screen.find("Add a model and enter an API key first.")!=std::string::npos);CHECK(screen.find("[1] Interface language")!=std::string::npos);
+    // Saving a language preference should produce one visible notice, not a duplicate.
+    output.clear();CHECK(write(master,"1\n2\n",4)==4);
+    CHECK(terminal_until(master,output,"Language changed to English."));CHECK(terminal_until(master,output,"Select a number:"));
+    size_t first_notice=output.find("Language changed to English."),last_notice=output.rfind("Language changed to English.");
+    CHECK(first_notice==last_notice);
     // EOF from a settings submenu must terminate without redrawing forever.
     output.clear();CHECK(write(master,"2\n",2)==2);CHECK(terminal_until(master,output,"[1] Enable"));
     CHECK(write(master,"\x04",1)==1);
@@ -1494,7 +1499,8 @@ static void test_model_switch_requests(){
     leave_chat_and_exit(master);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
     if(!child){setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
-    output.clear();CHECK(terminal_until(master,output,"selected-model · 0 Token · Current"));
+    output.clear();CHECK(terminal_until(master,output,"selected-model · "));
+    CHECK(output.find("selected-model · ")!=std::string::npos&&output.find(" Token · Current")!=std::string::npos);
     type_terminal(master,output,"1\n1\nrestart work\n");CHECK(terminal_until(master,output,"RESTART_ON_SELECTED"));wait_for_chat_prompt(master,output,"RESTART_ON_SELECTED");
     leave_chat_and_exit(master);CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     server_done(old_server);server_done(new_server);

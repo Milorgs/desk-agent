@@ -376,7 +376,5 @@ bool save_language(App &app,const char *code){
         seterr(&app,tr("无法保存语言设置。"));fprintf(stderr,"%s\n",app.error);return false;
     }
     set_language(code);
-    puts(tr(!strcmp(code,"en")?"语言已切换为 English。":"语言已切换为简体中文。"));
-    puts(tr("语言仅影响界面，不向模型添加系统提示或语言要求。"));
     return true;
 }
