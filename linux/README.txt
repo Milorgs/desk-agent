@@ -5,10 +5,14 @@ libraries for libcurl, json-c, OpenSSL 3, GNU Readline 8 and AT-SPI.
 See DEPENDENCIES.txt for the build machine's library list. Other distributions
 can use the source-build instructions in the repository README.
 
-Extract the entire archive, then run:
+One-line installation for the latest release:
+  curl -fsSL https://raw.githubusercontent.com/Milorgs/desk-agent/main/install-linux.sh | sh
+
+Manual package use:
   ./desk
-Optional installation for the current user (no compiler required):
+or install the extracted binary with:
   sh ./install.sh --setup-path
+
 Open a new terminal, then enter desk.
 
 Select 3 to add your own model. Settings are under ~/.config/desk-agent

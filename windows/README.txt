@@ -1,8 +1,12 @@
 desk-agent for Windows 10/11 x64
 
 Extract the entire ZIP. Double-click desk.exe, or open a terminal here and run .\desk.exe.
-Optional installation (current user only):
+One-line installation for the latest release in PowerShell:
+  irm https://raw.githubusercontent.com/Milorgs/desk-agent/main/install-windows.ps1 | iex
+
+Manual package installation (current user only):
   powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+
 Open a NEW terminal after installation, then enter desk.
 
 All interactive actions use numbered menus. Select 3 to add YOUR OWN model;
