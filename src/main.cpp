@@ -251,7 +251,7 @@ static int number(Tasks &jobs,int maximum){
         if(input_closed||interrupted==SIGTERM)return -1;
         interrupted=0;
 #ifndef _WIN32
-        bool arrow_menu=interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO);
+        bool arrow_menu=interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)&&!getenv("DESK_NO_ARROW");
         if(arrow_menu){
             JsonPtr states(jobs.snapshot());
             for(size_t i=0;i<alen(states.get());i++)if(bget(at(states.get(),i),"active")){arrow_menu=false;break;}

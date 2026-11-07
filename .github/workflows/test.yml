@@ -5,6 +5,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-22.04
+    env:
+      DESK_NO_ARROW: 1
     strategy:
       matrix:
         mode: [release, sanitize]
