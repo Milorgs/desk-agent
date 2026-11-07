@@ -1,6 +1,7 @@
 #include "desk.hpp"
 #include "tasks.hpp"
 #include "mcp.hpp"
+#include "ui.hpp"
 #include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,10 +35,17 @@ static void show_notice(){
     if(!page_notice.empty()){printf("%s\n\n",page_notice.c_str());page_notice.clear();}
 }
 static bool roomy_interface(){
-    return interface_active&&terminal_columns()>=70&&terminal_rows()-content_top+1>=30;
+    // Room for the banner plus a full menu; a default 90x26 Konsole window must
+    // still get rules and spacing, so keep the bar low.
+    return interface_active&&terminal_columns()>=60&&terminal_rows()>=20;
+}
+static bool spaced_interface(){
+    // Blank lines between options cost a row each. A default 90x26 Konsole
+    // window fits the banner, model list and a six-item menu, so allow them.
+    return roomy_interface()&&terminal_rows()>=24&&terminal_columns()>=70;
 }
 static void menu_text(const char *text){
-    const bool roomy=roomy_interface(),color=interface_active&&terminal_supports_color();
+    const bool roomy=spaced_interface(),color=interface_active&&terminal_supports_color();
     bool heading=*text=='\n';
     std::string_view rest(text);
     do{
@@ -45,9 +53,9 @@ static void menu_text(const char *text){
         bool option=line.starts_with("  [");
         bool title=heading&&!line.empty()&&line.front()!=' ';
         if(interface_active&&(option||title))fputs(title?"    ":"  ",stdout);
-        if(color&&(option||title))fputs(title?"\033[1;94m":"\033[1m",stdout);
-        fwrite(line.data(),1,line.size(),stdout);
-        if(color&&(option||title))fputs("\033[0m",stdout);
+        if(color&&option)fputs(ui_paint(Tone::Accent,line).c_str(),stdout);
+        else if(color&&title)fputs(ui_paint(Tone::Plain,line,true).c_str(),stdout);
+        else fwrite(line.data(),1,line.size(),stdout);
         putchar('\n');
         if(roomy&&(option||title))putchar('\n');
         if(!line.empty())heading=false;
@@ -63,10 +71,13 @@ static void menu_printf(const char *format,...){
 }
 static void page_rule(){
     if(!roomy_interface())return;
-    bool color=terminal_supports_color();
-    fputs(color?"  \033[94m":"  ",stdout);
-    for(int i=0;i<std::min(terminal_columns()-4,100);i++)fputs("─",stdout);
-    fputs(color?"\033[0m\n":"\n",stdout);
+    const int width=std::min(terminal_columns()-4,100);
+    if(width<4)return;
+    std::string line;
+    for(int i=0;i<width;i++)line+="─";
+    fputs("  ",stdout);
+    fputs(ui_paint(Tone::Rule,line).c_str(),stdout);
+    fputc('\n',stdout);
 }
 static void clear_page(){
     if(interface_active){printf("\033[%d;1H\033[J",content_top);fflush(stdout);}
@@ -83,8 +94,21 @@ public:
     }
 };
 static void status(App *a){
-    printf(tr("\n  desk code %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
-    printf(tr("  推理模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")));
+    const int width=terminal_columns()>0?std::max(24,std::min(terminal_columns()-4,88)):0;
+    printf("\n  %s\n\n",ui_paint(Tone::Bold,tr("desk code 状态")).c_str());
+    auto row=[&](const char *label,const char *value){
+        std::string lead=tr(label);
+        while(ui_width(lead)<8)lead+=' ';
+        fputs("  ",stdout);
+        fputs(ui_paint(Tone::Dim,lead).c_str(),stdout);
+        fputs(ui_paint(Tone::Plain,ui_clip(value,width>0?std::max(12,width-10):0)).c_str(),stdout);
+        putchar('\n');
+    };
+    row("模型",sget(a->config,"model"));
+    row("接口",sget(a->config,"protocol"));
+    row("目录",a->root);
+    row("批准",permission_name(*a));
+    row("推理",reasoning_name(sget(a->config,"reasoning_effort")));
 }
 static char *field(const char *name,const char *fallback,bool secret){
     char prompt[8192];
@@ -466,18 +490,7 @@ class ConversationScreen {
     std::string last_header;
     double checked=0;
     static std::string clipped(std::string_view text,int width){
-        std::string result;int cells=0;
-        while(!text.empty()){
-            auto first=static_cast<unsigned char>(text.front());
-            size_t size=first<0x80?1:first<0xe0?2:first<0xf0?3:4;
-            if(size>text.size())break;
-            wchar_t value=0;std::mbstate_t state{};
-            int count=std::mbrtowc(&value,text.data(),size,&state)==size?wcwidth(value):1;
-            if(count<0){text.remove_prefix(size);continue;}
-            if(cells+count>width-1){result+="…";break;}
-            result.append(text.substr(0,size));cells+=count;text.remove_prefix(size);
-        }
-        return result;
+        return ui_clip(text,width);
     }
 public:
     Conversation *current=nullptr;
@@ -585,8 +598,9 @@ public:
                 std::string_view text=index<rows_text.size()?rows_text[index].text:std::string_view{};
                 bool approval=index<rows_text.size()&&rows_text[index].approval;
                 bool color=terminal_supports_color()&&(row==1||approval);
-                const char *style=color?(approval?"\033[1;93m":"\033[1;94m"):"";
-                printf("\033[%d;1H\033[2K%s%s%s",row,style,clipped(text,columns).c_str(),color?"\033[0m":"");
+                auto body=clipped(text,columns);
+                auto painted=color?ui_paint(approval?Tone::Warning:Tone::Accent,body,true):body;
+                printf("\033[%d;1H\033[2K%s",row,painted.c_str());
             }
             fputs("\0338",stdout);fflush(stdout);
         }else if(rows_text.size()>1)terminal_message("\n"+header+"\n");
@@ -753,8 +767,32 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
     if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
     show_notice();
     if(conversation)show_conversation_history(*a,*conversation);
-    printf(tr("  工作目录：%s\n"),a->root);
-    menu_text(tr("任务及工具结果会发送到配置的 API。"));
+    {
+        // Compact context block instead of three loose lines.
+        std::string body;
+        char line[PATH_MAX+64];
+        snprintf(line,sizeof line,tr("  工作目录：%s\n"),a->root);
+        body+=line;
+        body+=tr("  任务及工具结果会发送到配置的 API。");
+        const int columns=terminal_columns();
+        const int width=columns>0?std::min(std::max(columns-4,32),100):0;
+        if(width>=32){
+            fputs("  ",stdout);
+            std::string boxed=ui_box(tr("会话"),body,width-2);
+            size_t start=0;
+            while(start<boxed.size()){
+                auto end=boxed.find('\n',start);
+                auto part=boxed.substr(start,end==std::string::npos?std::string::npos:end-start);
+                fputs(part.c_str(),stdout);
+                putchar('\n');
+                if(end==std::string::npos)break;
+                fputs("  ",stdout);
+                start=end+1;
+            }
+        }else{
+            printf("%s\n",body.c_str());
+        }
+    }
 #ifndef _WIN32
     menu_text(tr(conversation?"Ctrl+D 返回选择对话并在后台继续，Ctrl+C 停止当前对话，输入 / 打开操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开操作菜单。"));
 #else
@@ -778,9 +816,13 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
         std::string model=sget(a->config,"model");
         std::string modes=std::string(language_code())+" "+reasoning_name(sget(a->config,"reasoning_effort"))+" "+permission_name(*a);
         if(model!=last_model||modes!=last_modes){
-            printf(tr("  当前模型：%s\n"),model.c_str());
-            puts(tr("  F2 切换模型 · F3 推理强度"));
-            printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
+            // Two compact lines: the model plus key hints, then the modes. The
+            // wording below is load-bearing for translations and tests.
+            char hint[768],summary[512];
+            snprintf(hint,sizeof hint,tr("  当前模型：%s%s\n"),model.c_str(),tr(" · F2 切换模型 · F3 推理强度 · / 打开操作菜单"));
+            fputs(ui_paint(Tone::Dim,hint).c_str(),stdout);
+            snprintf(summary,sizeof summary,tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
+            fputs(ui_paint(Tone::Plain,summary).c_str(),stdout);
             last_model=std::move(model);
             last_modes=std::move(modes);
         }
@@ -867,8 +909,12 @@ static void show_token_usage(J *usage,J *config){
     else menu_text(tr("  无法读取累计 Token 用量。"));
 }
 static void show_banner(){
-    const bool color=terminal_supports_color();
-    printf("\n  %sdesk code%s  v%s\n\n",color?"\033[3;1;94m":"",color?"\033[0m":"",VERSION);
+    printf("\n  %s %s\n",
+           ui_paint(Tone::Accent,"desk code",true).c_str(),
+           ui_paint(Tone::Dim,VERSION).c_str());
+    fputs("  ",stdout);
+    fputs(ui_paint(Tone::Dim,tr("终端编程助手")).c_str(),stdout);
+    putchar('\n');
     page_rule();
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items,bool direct=false){
@@ -1008,13 +1054,13 @@ static int menu(App *a,bool direct=false){
             json_object_object_foreach(profiles,name,profile){
                 const char *model=sget(profile,"model");
                 bool current=*active_model&&!strcmp(name,active_profile)&&!strcmp(model,active_model);
-                printf("    %zu. %s",index++,model);
-                if(usage)printf(" · %llu Token",static_cast<unsigned long long>(model_tokens(usage.get(),profile)));
-                if(current){
-                    fputs(tr(" · 当前"),stdout);
-                    active_listed=true;
-                }
-                putchar('\n');
+                char row[640];
+                int used=snprintf(row,sizeof row,"    %zu. %s",index++,model);
+                if(usage&&used>0&&used<(int)sizeof row)used+=snprintf(row+used,sizeof row-(size_t)used," · %llu Token",static_cast<unsigned long long>(model_tokens(usage.get(),profile)));
+                if(current&&used>0&&used<(int)sizeof row)snprintf(row+used,sizeof row-(size_t)used,"%s",tr(" · 当前"));
+                // The active profile reads as accent; the rest stay quiet.
+                puts(current?ui_paint(Tone::Accent,row).c_str():ui_paint(Tone::Dim,row).c_str());
+                if(current)active_listed=true;
             }
         }
         if(!active_listed){
@@ -1039,7 +1085,7 @@ static int menu(App *a,bool direct=false){
     }
 }
 static void help(void){
-    menu_text(tr("运行 desk 后，使用数字菜单；也可以像 Claude Code 一样直接开始对话。"));
+    menu_text(tr("运行 desk 后，使用数字菜单完成对话和设置。"));
     menu_text(tr("desk [选项] [chat|任务|config|doctor|inspect]\n无任务参数打开数字菜单。\ndesk chat 直接进入对话。\ndesk -p \"需求\" 执行一次请求并退出。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
 }
 static int run_cli(int argc,char **argv){

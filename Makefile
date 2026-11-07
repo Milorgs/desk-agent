@@ -8,7 +8,7 @@ LDLIBS += $(shell pkg-config --libs $(PKGS) $(ATSPI))
 ifneq ($(ATSPI),)
 CPPFLAGS += -DWITH_ATSPI
 endif
-CORE = src/history.cpp src/mcp.cpp src/common.cpp src/platform.cpp src/tasks_ui.cpp src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
+CORE = src/history.cpp src/mcp.cpp src/common.cpp src/platform.cpp src/ui.cpp src/tasks_ui.cpp src/util.cpp src/config.cpp src/api.cpp src/files.cpp src/process.cpp src/desktop.cpp src/agent.cpp src/tasks.cpp src/i18n.cpp
 CORE_OBJ = $(CORE:%.cpp=build/obj/%.o)
 APP_OBJ = build/obj/src/main.o
 TEST_OBJ = build/obj/tests/test.o
@@ -26,7 +26,7 @@ build/desk: $(CORE_OBJ) $(APP_OBJ) | build
 build/test: $(CORE_OBJ) $(TEST_OBJ) | build
 	$(CXX) $(CXXFLAGS) $(WARN) $^ $(LDFLAGS) $(LDLIBS) -lutil -o $@
 test: build/desk build/test
-	./build/test
+	DESK_NO_ARROW=1 ./build/test
 test-mcp-http: build/desk
 	python3 tests/mcp_http.py
 sanitize:

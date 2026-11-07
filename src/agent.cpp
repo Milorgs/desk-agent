@@ -1,6 +1,7 @@
 #include "desk.hpp"
 #include "tasks.hpp"
 #include "mcp.hpp"
+#include "ui.hpp"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -173,21 +174,46 @@ static void show_call(const char *name,J *args){
         !strcmp(name,"write_file")?tr("写入文件"):!strcmp(name,"run_shell")?tr("执行命令"):
         !strcmp(name,"desktop_snapshot")?tr("读取桌面"):tr("操作桌面");
     const char *target=*sget(args,"path")?sget(args,"path"):!strcmp(name,"run_shell")?sget(args,"command"):sget(args,"app");
-    printf("→ %s  %.300s\n",label,target);
+    const int width=std::max(24,terminal_columns()-6);
+    std::string head=std::string(ui_bullet())+" "+label;
+    if(*target){
+        std::string inner=ui_clip(target,std::max(8,width-ui_width(head)-2));
+        head+="("+inner+")";
+    }
+    printf("%s\n",ui_paint(Tone::Accent,ui_clip(head,width)).c_str());
     if(!strcmp(name,"search_text"))printf(tr("  查找：%.256s\n"),sget(args,"query"));
     fflush(stdout);
 }
 static void show_result(const char *name,J *r,double elapsed){
     bool failed=tool_failed(r);
-    printf(tr("  %s（%.1f 秒）"),failed?tr("失败"):tr("完成"),elapsed);
-    if(*sget(r,"error"))printf("：%s",sget(r,"error"));
-    else if(!strcmp(name,"run_shell"))printf(tr(" · 退出码 %d%s"),iget(r,"exit_code",0),bget(r,"timed_out")?tr(" · 超时"):"");
-    else if(get(r,"written"))fputs(tr(" · 已回读核对"),stdout);
-    else if(!strcmp(name,"read_file"))printf(tr(" · %d 字节"),json_object_get_string_len(get(r,"content")));
-    else if(!strcmp(name,"search_text"))printf(tr(" · %zu 条匹配%s"),alen(get(r,"matches")),bget(r,"truncated")?tr(" · 结果有截断"):"");
-    else if(!strcmp(name,"list_files"))printf(tr(" · %zu 项"),alen(get(r,"entries")));
-    else if(get(r,"accepted"))fputs(tr(" · 等待重新读取核对"),stdout);
-    putchar('\n');
+    std::string detail;
+    char text[512];
+    if(*sget(r,"error")){detail=" · ";detail.append(sget(r,"error"));}
+    else if(!strcmp(name,"run_shell")){
+        snprintf(text,sizeof text,tr(" · 退出码 %d%s"),iget(r,"exit_code",0),bget(r,"timed_out")?tr(" · 超时"):"");
+        detail=text;
+    }
+    else if(get(r,"written"))detail=tr(" · 已回读核对");
+    else if(!strcmp(name,"read_file")){
+        snprintf(text,sizeof text,tr(" · %d 字节"),json_object_get_string_len(get(r,"content")));
+        detail=text;
+    }
+    else if(!strcmp(name,"search_text")){
+        snprintf(text,sizeof text,tr(" · %zu 条匹配%s"),alen(get(r,"matches")),bget(r,"truncated")?tr(" · 结果有截断"):"");
+        detail=text;
+    }
+    else if(!strcmp(name,"list_files")){
+        snprintf(text,sizeof text,tr(" · %zu 项"),alen(get(r,"entries")));
+        detail=text;
+    }
+    else if(get(r,"accepted"))detail=tr(" · 等待重新读取核对");
+    char timing[48];
+    snprintf(timing,sizeof timing," · %.1fs",elapsed);
+    std::string line=std::string("  ")+ui_result()+"  ";
+    line+=failed?tr("失败"):tr("完成");
+    line+=detail;
+    line+=timing;
+    printf("%s\n",ui_paint(failed?Tone::Error:Tone::Dim,ui_clip(line,std::max(24,terminal_columns()-6))).c_str());
     if(!strcmp(name,"run_shell")&&*sget(r,"output")){
         const char *output=sget(r,"output");
         printf("%.*s\n",1600,output);

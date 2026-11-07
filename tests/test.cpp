@@ -1630,7 +1630,7 @@ static void test_picker_approval_status(){
     CHECK(terminal_until(master,output,"选择对话"));
     CHECK(terminal_until(master,output,"待审批：1"));
     CHECK(terminal_until(master,output,"[1] 等待审批 · 创建文件"));
-    CHECK(output.find("\033[1;93m")!=std::string::npos);
+    CHECK(output.find("\033[38;5;179m")!=std::string::npos); // warning tone
     const auto path=std::string(a.root)+"/reviewed.txt";CHECK(access(path.c_str(),F_OK)!=0);
     // A second conversation changes selector numbers, but approvals stay first.
     output.clear();type_terminal(master,output,"2\n另一任务\n");
@@ -1639,7 +1639,7 @@ static void test_picker_approval_status(){
     output.clear();CHECK(::write(master,"\x04",1)==1);
     CHECK(terminal_until(master,output,"1. 另一任务"));
     CHECK(terminal_until(master,output,"2. 创建文件"));
-    CHECK(terminal_until(master,output,"\033[2;1H\033[2K\033[1;93m[2] 等待审批 · 创建文件"));
+    CHECK(terminal_until(master,output,"\033[2;1H\033[2K\033[1m\033[38;5;179m[2] 等待审批 · 创建文件"));
     output.clear();type_terminal(master,output,"2\n");
     CHECK(terminal_until(master,output,"[3] 查看完整操作 [0] 取消："));
     CHECK(access(path.c_str(),F_OK)!=0); // Choosing a chat never approves its operation.

@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include "ui.hpp"
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
@@ -200,9 +201,12 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
         fputs("\033[?7l",stdout);
         for(size_t i=first;i<first+visible;i++){
             const bool focused=i==selected;
-            printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
-                   focused?"❯ ":"  ",(i+1)%items.size(),labels[i].c_str(),
-                   focused&&color?"\033[0m":"");
+            // The focused row gets the accent colour and a bold label. Unselected
+            // rows keep full brightness: dim text disappears on translucent
+            // backgrounds, which is a common Konsole setup.
+            std::string label=std::to_string((i+1)%items.size())+". "+labels[i];
+            if(focused&&color)label=ui_paint(Tone::Accent,label,true);
+            printf("\r\033[2K%s%s\n",focused?"❯ ":"  ",label.c_str());
         }
         fputs("\033[?7h",stdout);
         fflush(stdout);

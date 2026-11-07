@@ -1,6 +1,7 @@
 #include "desk.hpp"
 #include "tasks.hpp"
 #include "mcp.hpp"
+#include "ui.hpp"
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -20,9 +21,18 @@ std::string elapsed_label(double seconds){
     return text;
 }
 static void draw_progress(App *app){
+    const bool color=terminal_supports_color();
+    if(app->progress_animated){
+        const char *frame=ui_spinner(static_cast<size_t>(monotime()*9));
+        fputs(color?ui_paint(Tone::Accent,frame).c_str():frame,stdout);
+        fputc(' ',stdout);
+    }
     fputs(app->progress_text.c_str(),stdout);
-    if(app->thinking)printf(" %s",elapsed_label(monotime()-app->thinking_started).c_str());
-    if(app->progress_animated)printf(" %c","|/-\\"[static_cast<unsigned long long>(monotime()*5)%4]);
+    if(app->thinking){
+        std::string elapsed=elapsed_label(monotime()-app->thinking_started);
+        fputc(' ',stdout);
+        fputs(ui_paint(Tone::Dim,elapsed).c_str(),stdout);
+    }
 }
 void progress_clear(App *app){
     if(app->progress_visible){
@@ -171,27 +181,44 @@ int approve(App *a,const char *description,Operation operation){
     if(!approval_required(*a,operation)){if(a->verbose)printf("\n%s\n",description);return 1;}
     progress_clear(a);
     bool compact=!a->verbose&&(a->task_events<0||a->conversation_worker);
-    if(compact){
-        size_t count=strcspn(description,"\n");if(count>300)count=300;
-        while(count&&(static_cast<unsigned char>(description[count])&0xc0)==0x80)count--;
-        printf("\n%.*s%s\n",static_cast<int>(count),description,description[count]?"…":"");
-    }else printf("\n%s\n",description);
+    // The operation preview reads as a block so commands and diffs stay distinct
+    // from the surrounding conversation.
+    auto preview=[&](bool truncate){
+        size_t count=strlen(description);
+        if(truncate){
+            count=strcspn(description,"\n");
+            if(count>300)count=300;
+            while(count&&(static_cast<unsigned char>(description[count])&0xc0)==0x80)count--;
+        }
+        std::string body(description,count);
+        if(truncate&&description[count])body+="…";
+        putchar('\n');
+        fputs(ui_paint(Tone::Warning,std::string("  ┃ ")).c_str(),stdout);
+        std::string joined;
+        for(size_t i=0;i<body.size();i++){
+            // Newlines repeat the gutter so multi-line commands stay aligned.
+            joined+=(body[i]=='\n'&&i+1<body.size())?std::string("\n  ┃ "):std::string(1,body[i]);
+        }
+        fputs(ui_paint(Tone::Plain,joined).c_str(),stdout);
+        putchar('\n');
+    };
+    preview(compact);
     if(a->task_events<0&&!isatty(STDIN_FILENO))return 0;
     bool yes=false;
     for(;;){
         fflush(stdout);
         task_event(*a,'a');
         if(a->task_events<0){
-            puts(tr("操作需要批准"));
+            puts(ui_paint(Tone::Warning,tr("操作需要批准")).c_str());
             if(auto choice=terminal_choice(approval_choices(compact),0,1,{},true)){
-                if(*choice==3){printf("\n%s\n",description);continue;}
+                if(*choice==3){preview(false);continue;}
                 yes=*choice==1;
                 break;
             }
         }
         const char *prompt=a->task_events>=0&&!a->conversation_worker?tr("等待批准此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
         char *value=input(a->guided_approval?"":prompt,nullptr,false);
-        if(value&&compact&&!strcmp(value,"3")){free(value);printf("\n%s\n",description);continue;}
+        if(value&&compact&&!strcmp(value,"3")){free(value);preview(false);continue;}
         yes=value&&!strcmp(value,"1");free(value);break;
     }
     task_event(*a,'r');
