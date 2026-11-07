@@ -314,6 +314,34 @@ static std::string request_text(Tasks &jobs,const char *prompt){
     std::unique_ptr<char,decltype(&free)> text(jobs.readline(prompt),free);
     return text?text.get():"";
 }
+static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items){
+#ifndef _WIN32
+    if(interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)&&!getenv("DESK_NO_ARROW")){
+        struct termios old{},raw{};
+        if(!tcgetattr(STDIN_FILENO,&old)){raw=old;raw.c_lflag&=static_cast<unsigned long>(~(ICANON|ECHO));raw.c_cc[VMIN]=1;raw.c_cc[VTIME]=0;
+            if(!tcsetattr(STDIN_FILENO,TCSANOW,&raw)){
+                size_t selected=0;auto draw=[&]{
+                    for(size_t i=0;i<items.size();i++){
+                        printf("\033[2K%s%s %zu. %s\n",i==selected?"❯ ":"  ",i==selected?"\033[1;94m":"",i+1,items[i].c_str());
+                        if(i==selected)fputs("\033[0m",stdout);
+                    }
+                    printf("\033[2K  %s\n",tr("↑/↓ 选择 · Enter 确认 · Ctrl+D 返回"));fflush(stdout);
+                };draw();
+                for(;;){unsigned char key=0;if(read(STDIN_FILENO,&key,1)!=1){selected=items.size();break;}
+                    if(key=='\r'||key=='\n')break;
+                    if(key==4){selected=items.size();input_closed=true;break;}
+                    if(key==3){selected=items.size();interrupted=SIGINT;break;}
+                    if(key==27){unsigned char seq[2]{};if(read(STDIN_FILENO,seq,2)==2&&seq[0]=='['){if(seq[1]=='A')selected=selected?selected-1:items.size()-1;else if(seq[1]=='B')selected=(selected+1)%items.size();
+                            printf("\033[%zuA",items.size()+1);draw();}continue;}
+                    if(key>='1'&&key<='9'){size_t n=key-'1';if(n<items.size())selected=n;draw();}
+                }
+                tcsetattr(STDIN_FILENO,TCSANOW,&old);return selected==items.size()?-1:static_cast<int>(selected+1);
+            }
+        }
+    }
+#endif
+    return number(jobs,static_cast<int>(items.size()));
+}
 static void language_menu(App *a,Tasks &jobs){
     clear_page();
     menu_text(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
@@ -898,8 +926,7 @@ static int menu(App *a){
         }
         if(!usage&&(active_listed||!*active_model))menu_text(tr("  无法读取累计 Token 用量。"));
         page_rule();
-        menu_text(tr("\n  [1] 开始对话\n  [2] 选择模型\n  [3] 添加模型\n  [4] 设置\n  [5] MCP 服务\n  [0] 退出"));
-        int choice=number(jobs,5);
+        int choice=arrow_menu(jobs,{tr("开始对话"),tr("选择模型"),tr("添加模型"),tr("设置"),tr("MCP 服务")});
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
         int rc=0;
