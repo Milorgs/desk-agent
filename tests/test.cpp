@@ -1216,6 +1216,76 @@ static void type_terminal(int fd,std::string &output,const std::string &text){
     }
     CHECK(used==text.size());
 }
+static void test_guided_approval(){
+    App a=fresh();
+    json_object_put(a.config);
+    a.config=config("guided-approval","openai");
+    J *write=args("guided.txt");
+    put(write,"content",str("review-before-allow"));
+    put(write,"expected_sha256",nullptr);
+    std::string edit=model_tool("write","write_file",write);
+    std::string done=model_reply(nullptr,"GUIDED_EDIT_DONE");
+    std::string follow=model_reply(nullptr,"DRAFT_RECEIVED");
+    const char *responses[]={edit.c_str(),done.c_str(),follow.c_str()};
+    pid_t server=fake_server(&a,responses,3,200,700);
+    CHECK(!save_config(&a,a.config));
+    int master=-1;
+    winsize window{30,100,0,0};
+    pid_t child=forkpty(&master,nullptr,nullptr,&window);
+    CHECK(child>=0);
+    if(!child){
+        unsetenv("DESK_NO_ARROW");
+        setenv("TERM","xterm-256color",1);
+        setenv("NO_COLOR","1",1);
+        execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));
+        _exit(127);
+    }
+    std::string output;
+    CHECK(terminal_until(master,output,"❯ 1. Start chat"));
+    type_terminal(master,output,"1\n1\nwrite the file\n");
+    CHECK(terminal_until(master,output,"Thinking..."));
+    output.clear();
+    type_terminal(master,output,"next draft");
+    CHECK(terminal_until(master,output,"❯ 0. Cancel"));
+    std::string path=std::string(a.root)+"/guided.txt";
+    CHECK(access(path.c_str(),F_OK)!=0);
+    output.clear();
+    type_terminal(master,output,"\x1b[A\n");
+    CHECK(terminal_until(master,output,"review-before-allow"));
+    CHECK(terminal_until(master,output,"❯ 0. Cancel"));
+    CHECK(access(path.c_str(),F_OK)!=0);
+    output.clear();
+    type_terminal(master,output,"\x1b[A\x1b[A\x1b[A\n");
+    CHECK(terminal_until(master,output,"GUIDED_EDIT_DONE"));
+    CHECK(terminal_until(master,output,"next draft"));
+    output.clear();
+    type_terminal(master,output,"\n");
+    CHECK(terminal_until(master,output,"DRAFT_RECEIVED"));
+    wait_for_chat_prompt(master,output,"DRAFT_RECEIVED");
+    output.clear();
+    type_terminal(master,output,"/");
+    CHECK(terminal_until(master,output,"❯ 1. New conversation"));
+    output.clear();
+    type_terminal(master,output,"\x1b");
+    CHECK(terminal_until(master,output,"❯ "));
+    CHECK(output.find("Select a number:")==std::string::npos);
+    output.clear();
+    type_terminal(master,output,"\x04");
+    CHECK(terminal_until(master,output,"0. Main menu"));
+    output.clear();
+    type_terminal(master,output,"0\n");
+    CHECK(terminal_until(master,output,"❯ 1. Start chat"));
+    type_terminal(master,output,"0\n");
+    int status=0;
+    CHECK(waitpid(child,&status,0)==child);
+    close(master);
+    CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    server_done(server);
+    JsonPtr request(capture(&a,2));
+    J *messages=get(get(request.get(),"body"),"messages");
+    CHECK(!strcmp(sget(at(messages,alen(messages)-1),"content"),"next draft"));
+    app_cleanup(&a);
+}
 static void test_line_editing(void){
     App a=fresh();json_object_put(a.config);a.config=config("line-edit","openai");
     std::vector<std::pair<std::string,std::string>> cases={
@@ -1595,6 +1665,7 @@ int main(int argc,char **argv){
     test_compact_output();
     test_exit_during_work();
     test_compact_approval();
+    test_guided_approval();
     test_line_editing();
     test_queued_editing();
     test_conversation_picker();

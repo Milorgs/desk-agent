@@ -160,6 +160,12 @@ const char *reasoning_name(const char *effort){
 bool approval_required(const App &app,Operation operation){
     return !app.yes&&!(app.auto_edit&&operation==Operation::FileEdit);
 }
+std::vector<std::string> approval_choices(bool preview){
+    std::vector<std::string> items{tr("允许"),tr("拒绝")};
+    if(preview)items.emplace_back(tr("查看完整操作"));
+    items.emplace_back(tr("取消"));
+    return items;
+}
 int approve(App *a,const char *description,Operation operation){
     if(interrupted)return 0;
     if(!approval_required(*a,operation)){if(a->verbose)printf("\n%s\n",description);return 1;}
@@ -171,11 +177,20 @@ int approve(App *a,const char *description,Operation operation){
         printf("\n%.*s%s\n",static_cast<int>(count),description,description[count]?"…":"");
     }else printf("\n%s\n",description);
     if(a->task_events<0&&!isatty(STDIN_FILENO))return 0;
-    task_event(*a,'a');
     bool yes=false;
     for(;;){
+        fflush(stdout);
+        task_event(*a,'a');
+        if(a->task_events<0){
+            puts(tr("操作需要批准"));
+            if(auto choice=terminal_choice(approval_choices(compact),0,1,{},true)){
+                if(*choice==3){printf("\n%s\n",description);continue;}
+                yes=*choice==1;
+                break;
+            }
+        }
         const char *prompt=a->task_events>=0&&!a->conversation_worker?tr("等待批准此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
-        char *value=input(prompt,nullptr,false);
+        char *value=input(a->guided_approval?"":prompt,nullptr,false);
         if(value&&compact&&!strcmp(value,"3")){free(value);printf("\n%s\n",description);continue;}
         yes=value&&!strcmp(value,"1");free(value);break;
     }

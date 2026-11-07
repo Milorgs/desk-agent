@@ -134,14 +134,29 @@ void terminal_message(const std::string &text){
     rl_restore_prompt();rl_replace_line(line.c_str(),0);rl_point=point;
     rl_on_new_line();rl_redisplay();fflush(stdout);
 }
-char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle){
+char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle,ChatDraft *draft){
     if(input_closed)return nullptr;
     if(!secret&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)){
         if(terminal_eof()){input_closed=true;putchar('\n');return nullptr;}
         EditorSession session(prompt);
+        if(draft){
+            draft->paused=false;
+            if(!draft->text.empty()){
+                rl_replace_line(draft->text.c_str(),0);
+                rl_point=draft->cursor;
+                rl_redisplay();
+            }
+        }
         struct winsize previous{};ioctl(STDOUT_FILENO,TIOCGWINSZ,&previous);
         while(!session.state.done&&!interrupted){
             if(idle)idle();
+            if(draft&&draft->approval_pending&&draft->approval_pending()){
+                draft->text.assign(rl_line_buffer,static_cast<size_t>(rl_end));
+                draft->cursor=rl_point;
+                draft->paused=true;
+                fputs("\r\033[2K",stdout);
+                return nullptr;
+            }
             struct pollfd ready{STDIN_FILENO,POLLIN,0};int rc=poll(&ready,1,50);
             if(interrupted)break;
             if(rc<0&&errno!=EINTR)break;
@@ -154,10 +169,16 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
                 rl_forced_update_display();
             }
             if(rc>0&&(ready.revents&(POLLIN|POLLHUP)))rl_callback_read_char();
+            if(draft&&!session.state.done&&rl_last_func==rl_insert&&rl_end==1&&rl_line_buffer[0]=='/'){
+                draft->text.clear();draft->cursor=0;
+                fputs("\r\033[2K",stdout);
+                return strdup("/");
+            }
             if(!session.state.done&&rl_end>65536){
                 rl_replace_line("",0);rl_crlf();puts(tr("输入超过 64 KB，请缩短后重试。"));rl_on_new_line();rl_redisplay();
             }
         }
+        if(draft){draft->text.clear();draft->cursor=0;}
         if(interrupted){rl_replace_line("",0);rl_crlf();free(session.state.line);return nullptr;}
         if(!session.state.done)return nullptr;
         char *line=session.state.line;

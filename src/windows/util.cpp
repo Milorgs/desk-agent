@@ -85,3 +85,85 @@ char *input(const char *prompt,const char *fallback,bool secret){
 }
 
 void check_exit(const App &app){(void)app;}
+
+
+// Read console events so chat menus and task updates do not wait for Enter.
+char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle,ChatDraft *draft){
+    HANDLE console=GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode=0;
+    if(secret||!GetConsoleMode(console,&mode)||!terminal_supports_ansi())return input(prompt,fallback,secret);
+    if(input_closed)return nullptr;
+    std::wstring text=draft?wide(draft->text):std::wstring{};
+    size_t point=text.size();
+    wchar_t pending_surrogate=0;
+    if(draft){draft->paused=false;}
+    auto redraw=[&]{
+        printf("\r\033[2K\033[?7l%s",prompt);
+        auto before=utf8(std::wstring_view(text).substr(0,point));
+        auto after=utf8(std::wstring_view(text).substr(point));
+        fputs(before.c_str(),stdout);
+        fputs("\0337",stdout);
+        fputs(after.c_str(),stdout);
+        fputs("\0338\033[?7h",stdout);
+        fflush(stdout);
+    };
+    redraw();
+    while(!interrupted){
+        if(idle)idle();
+        if(WaitForSingleObject(console,50)!=WAIT_OBJECT_0)continue;
+        INPUT_RECORD record{};
+        DWORD count=0;
+        if(!ReadConsoleInputW(console,&record,1,&count)||!count)break;
+        if(record.EventType==WINDOW_BUFFER_SIZE_EVENT){redraw();continue;}
+        if(record.EventType!=KEY_EVENT||!record.Event.KeyEvent.bKeyDown)continue;
+        const auto &key=record.Event.KeyEvent;
+        bool ctrl=(key.dwControlKeyState&(LEFT_CTRL_PRESSED|RIGHT_CTRL_PRESSED))!=0;
+        if(ctrl&&key.wVirtualKeyCode=='D'){input_closed=true;break;}
+        if(key.wVirtualKeyCode==VK_RETURN){
+            putchar('\n');
+            auto line=utf8(text);
+            if(draft){draft->text.clear();draft->cursor=0;}
+            return _strdup(line.empty()&&fallback?fallback:line.c_str());
+        }
+        auto previous=[&](size_t offset){
+            if(offset)offset--;
+            if(offset&&text[offset]>=0xdc00&&text[offset]<=0xdfff)offset--;
+            return offset;
+        };
+        auto next=[&](size_t offset){
+            if(offset<text.size()){
+                if(text[offset]>=0xd800&&text[offset]<=0xdbff)offset++;
+                offset++;
+            }
+            return std::min(offset,text.size());
+        };
+        if(key.wVirtualKeyCode==VK_LEFT)point=previous(point);
+        else if(key.wVirtualKeyCode==VK_RIGHT)point=next(point);
+        else if(key.wVirtualKeyCode==VK_HOME)point=0;
+        else if(key.wVirtualKeyCode==VK_END)point=text.size();
+        else if(key.wVirtualKeyCode==VK_BACK&&point){size_t begin=previous(point);text.erase(begin,point-begin);point=begin;}
+        else if(key.wVirtualKeyCode==VK_DELETE&&point<text.size())text.erase(point,next(point)-point);
+        else if(!ctrl&&key.uChar.UnicodeChar>=32&&text.size()<65536){
+            if(draft&&text.empty()&&key.uChar.UnicodeChar=='/'){
+                fputs("\r\033[2K",stdout);
+                return _strdup("/");
+            }
+            wchar_t value=key.uChar.UnicodeChar;
+            if(value>=0xd800&&value<=0xdbff){pending_surrogate=value;continue;}
+            std::wstring insertion;
+            if(value>=0xdc00&&value<=0xdfff){
+                if(pending_surrogate)insertion+=pending_surrogate;
+                else value=0xfffd;
+            }else if(pending_surrogate)insertion+=static_cast<wchar_t>(0xfffd);
+            pending_surrogate=0;
+            insertion+=value;
+            for(WORD i=0;i<key.wRepeatCount&&text.size()+insertion.size()<=65536;i++){
+                text.insert(point,insertion);
+                point+=insertion.size();
+            }
+        }
+        redraw();
+    }
+    putchar('\n');
+    return nullptr;
+}

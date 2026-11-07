@@ -111,7 +111,7 @@ for native in (False,True):
             send('1\n1\n');until('Connected. 2 tools available.')
             send('0\n0\n');until('❯ 1. Start chat')
             send('1\n1\nUse the MCP echo tool\n');until('MODEL_MCP_DONE')
-            send('/\n');until('❯ 1. New conversation')
+            send('/');until('❯ 1. New conversation')
             send('\x1b[B'*5);until('❯ 6. Approval mode')
             send('\n');until('❯ 1. Ask for approval')
             send('0\n');until('❯ ')

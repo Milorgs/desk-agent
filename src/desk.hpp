@@ -18,7 +18,8 @@
 #include <string_view>
 #include <vector>
 #include <functional>
-#define VERSION "1.8.7"
+#include <optional>
+#define VERSION "1.9.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -32,7 +33,7 @@ struct App {
     char root[PATH_MAX]{}, config_dir[PATH_MAX]{}, error[512]{};
     bool yes=false, auto_edit=false, shell=true, desktop=false, record=false, verbose=false, progress_visible=false;
     bool progress_animated=false;
-    bool conversation_worker=false;
+    bool conversation_worker=false, guided_approval=false;
     size_t session_revision=0;
     size_t config_revision=0;
     std::string progress_text{};
@@ -85,11 +86,20 @@ char *read_bytes(const char *path,size_t limit,size_t *length);
 int path_suffix(char out[PATH_MAX],const char *base,const char *suffix);
 int mkdirs(const char *path,unsigned int mode);
 int atomic_file(const char *path,const void *data,size_t len,unsigned int mode);
+std::optional<int> terminal_choice(const std::vector<std::string> &items,int initial,int top,
+                                   const std::function<void()> &idle={},bool transient=false);
+std::vector<std::string> approval_choices(bool preview);
 char *input(const char *prompt,const char *fallback,bool secret);
 #ifndef _WIN32
 void terminal_message(const std::string &text);
-char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle);
 #endif
+struct ChatDraft {
+    std::string text;
+    int cursor=0;
+    bool paused=false;
+    std::function<bool()> approval_pending;
+};
+char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle,ChatDraft *draft=nullptr);
 enum class Operation { Other, FileEdit };
 bool approval_required(const App &app,Operation operation=Operation::Other);
 const char *permission_name(const App &app);

@@ -8,11 +8,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <termios.h>
-#include <poll.h>
 #include <wchar.h>
-#else
-#include <windows.h>
 #endif
 #include <locale.h>
 #include <algorithm>
@@ -96,7 +92,7 @@ static char *field(const char *name,const char *fallback,bool secret){
     else snprintf(prompt,sizeof prompt,tr("%s [%s]："),name,fallback?fallback:"");
     return input(prompt,fallback,secret);
 }
-static int menu_choices(Tasks &jobs,const char *options,const char *details=nullptr,int initial=-1);
+static int menu_choices(Tasks &jobs,const char *options,const char *details=nullptr,int initial=-1,bool popup=false);
 static const char *choose_protocol(Tasks &jobs,const char *current){
     clear_page();
     int choice=menu_choices(jobs,tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"),nullptr,!strcmp(current,"anthropic")?2:1);
@@ -252,104 +248,10 @@ static std::string request_text(Tasks &jobs,const char *prompt){
     return text?text.get():"";
 }
 static std::optional<int> arrow_choice(Tasks &jobs,const std::vector<std::string> &items,int initial=1){
-    if(input_closed||interrupted==SIGTERM)return -1;
-    if(!isatty(STDIN_FILENO)||!terminal_supports_ansi()||env_value("DESK_NO_ARROW"))return std::nullopt;
-    interrupted=0;
-    enum {idle=-1,end_input=-2,ignored=-3,up=256,down=257};
-#ifdef _WIN32
-    HANDLE console=GetStdHandle(STD_INPUT_HANDLE);
-    DWORD original=0;
-    if(!GetConsoleMode(console,&original))return std::nullopt;
-    auto read_key=[&]() -> int {
-        auto ready=WaitForSingleObject(console,50);
-        if(ready==WAIT_TIMEOUT)return idle;
-        if(ready!=WAIT_OBJECT_0)return end_input;
-        INPUT_RECORD event{};
-        DWORD count=0;
-        if(!ReadConsoleInputW(console,&event,1,&count)||!count)return end_input;
-        if(event.EventType!=KEY_EVENT||!event.Event.KeyEvent.bKeyDown)return ignored;
-        const auto &key=event.Event.KeyEvent;
-        if(key.wVirtualKeyCode==VK_UP)return up;
-        if(key.wVirtualKeyCode==VK_DOWN)return down;
-        if(key.wVirtualKeyCode=='D'&&(key.dwControlKeyState&(LEFT_CTRL_PRESSED|RIGHT_CTRL_PRESSED)))return 4;
-        return key.uChar.UnicodeChar;
-    };
-#else
-    termios original{};
-    if(tcgetattr(STDIN_FILENO,&original))return std::nullopt;
-    termios mode=original;
-    mode.c_lflag&=~static_cast<tcflag_t>(ICANON|ECHO);
-    mode.c_cc[VMIN]=1;
-    mode.c_cc[VTIME]=0;
-    if(tcsetattr(STDIN_FILENO,TCSANOW,&mode))return std::nullopt;
-    struct RestoreTerminal {
-        termios mode;
-        ~RestoreTerminal(){tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
-    } restore{original};
-    auto read_key=[]() -> int {
-        pollfd ready{STDIN_FILENO,POLLIN,0};
-        int result=poll(&ready,1,50);
-        if(result<0)return errno==EINTR?ignored:end_input;
-        if(!result)return idle;
-        unsigned char key=0;
-        return read(STDIN_FILENO,&key,1)==1?static_cast<int>(key):end_input;
-    };
-#endif
-    size_t selected=initial?static_cast<size_t>(initial-1):items.size()-1;
-    const int rows=terminal_rows();
-    const size_t visible=std::min(items.size(),static_cast<size_t>(rows>content_top?rows-content_top:8));
-    size_t first=0;
-    std::string typed;
-    const bool color=terminal_supports_color();
-    auto draw=[&]{
-        if(selected<first)first=selected;
-        if(selected>=first+visible)first=selected-visible+1;
-        fputs("\033[?7l",stdout);
-        for(size_t i=first;i<first+visible;i++){
-            const bool focused=i==selected;
-            printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
-                   focused?"❯ ":"  ",(i+1)%items.size(),items[i].c_str(),
-                   focused&&color?"\033[0m":"");
-        }
-        fputs("\033[?7h",stdout);
-        fflush(stdout);
-    };
-    draw();
-    int escape=0;
-    while(!interrupted){
+    return terminal_choice(items,initial,content_top,[&]{
         jobs.refresh();
         if(jobs.on_idle)jobs.on_idle();
-        int key=read_key();
-        if(key==end_input)break;
-        if(key==idle){escape=0;continue;}
-        if(key==ignored)continue;
-        if(key=='\r'||key=='\n'){
-            if(typed.empty())return static_cast<int>((selected+1)%items.size());
-            auto value=strtoul(typed.c_str(),nullptr,10);
-            if(value<items.size())return static_cast<int>(value);
-            typed.clear();
-            continue;
-        }
-        if(key==4){input_closed=true;break;}
-        if(key==27){escape=1;continue;}
-        if(escape==1&&(key=='['||key=='O')){escape=2;continue;}
-        const size_t previous=selected;
-        if(key==up||key==down||(escape==2&&(key=='A'||key=='B'))){
-            selected=(selected+((key==up||key=='A')?items.size()-1:1))%items.size();
-            typed.clear();
-        }else if(!escape&&(key==127||key==8)){
-            if(!typed.empty())typed.pop_back();
-        }else if(!escape&&key>='0'&&key<='9'){
-            if(typed.size()<20)typed.push_back(static_cast<char>(key));
-        }
-        if(!typed.empty()){
-            auto value=strtoul(typed.c_str(),nullptr,10);
-            if(value<items.size())selected=value?value-1:items.size()-1;
-        }
-        escape=0;
-        if(previous!=selected){printf("\033[%zuA",visible);draw();}
-    }
-    return -1;
+    });
 }
 static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items,int initial){
     if(auto choice=arrow_choice(jobs,items,initial<0?1:initial))return *choice;
@@ -357,7 +259,7 @@ static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items,int init
     return number(jobs,static_cast<int>(items.size()-1),initial);
 }
 // Static menus keep their existing localized labels and numbered fallback.
-static int menu_choices(Tasks &jobs,const char *options,const char *details,int initial){
+static int menu_choices(Tasks &jobs,const char *options,const char *details,int initial,bool popup){
     std::vector<std::string> items;
     std::string heading;
     for(std::string_view lines(options);!lines.empty();){
@@ -368,6 +270,12 @@ static int menu_choices(Tasks &jobs,const char *options,const char *details,int 
         else {heading.append(line);heading+='\n';}
         if(end==lines.npos)break;
         lines.remove_prefix(end+1);
+    }
+    if(popup){
+        if(auto choice=terminal_choice(items,1,content_top,[&]{
+            jobs.refresh();
+            if(jobs.on_idle)jobs.on_idle();
+        },true))return *choice;
     }
     if(!heading.empty())menu_text(heading.c_str());
     if(details)menu_text(details);
@@ -456,6 +364,10 @@ struct Conversation {
     JsonPtr messages,config;
     int job=0;
     bool reset_context=false;
+#ifndef _WIN32
+    std::string draft{};
+    int draft_cursor=0;
+#endif
     std::string displayed{};
     struct Request {std::string text;JsonPtr settings;};
     std::vector<Request> queue{};
@@ -641,6 +553,15 @@ public:
             fputs("\0338",stdout);fflush(stdout);
         }else if(rows_text.size()>1)terminal_message("\n"+header+"\n");
     }
+    bool awaiting_approval(const Conversation &item){
+        if(!item.job)return false;
+        JsonPtr states(jobs.snapshot());
+        for(size_t i=0;i<alen(states.get());i++){
+            J *state=at(states.get(),i);
+            if(iget(state,"id",0)==item.job)return bget(state,"awaiting_approval");
+        }
+        return false;
+    }
     bool active(const Conversation &item){
         JsonPtr states(jobs.snapshot());
         for(size_t i=0;i<alen(states.get());i++)if(iget(at(states.get(),i),"id",0)==item.job)return bget(at(states.get(),i),"active");
@@ -651,7 +572,9 @@ public:
         JsonPtr settings(conversation_settings(app,item.reset_context));
         if(!item.job){
             app.conversation_worker=true;
+            app.guided_approval=terminal_supports_ansi()&&!env_value("DESK_NO_ARROW");
             item.job=jobs.start(app,task);
+            app.guided_approval=false;
             app.conversation_worker=false;
             if(item.job<0){item.job=0;return false;}
         }else if(active(item)||!item.queue.empty()){
@@ -719,8 +642,7 @@ static void mcp_menu(App *a,Tasks &jobs){
     }
 }
 static int chat_menu(App *a,Tasks &jobs){
-    clear_page();
-    int choice=menu_choices(jobs,tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"));if(choice<=0)return 0;
+    int choice=menu_choices(jobs,tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"),nullptr,-1,true);if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)settings_menu(a,jobs);
@@ -746,12 +668,21 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
     printf(tr("  工作目录：%s\n"),a->root);
     menu_text(tr("任务及工具结果会发送到配置的 API。"));
 #ifndef _WIN32
-    menu_text(tr(conversation?"Ctrl+D 返回选择对话并在后台继续，Ctrl+C 停止当前对话，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+    menu_text(tr(conversation?"Ctrl+D 返回选择对话并在后台继续，Ctrl+C 停止当前对话，输入 / 打开操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开操作菜单。"));
 #else
-    menu_text(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开数字操作菜单。"));
+    menu_text(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开操作菜单。"));
 #endif
 #ifndef _WIN32
     if(screen)screen->current=conversation;
+#endif
+    const bool guided=terminal_supports_ansi()&&!env_value("DESK_NO_ARROW");
+    ChatDraft draft;
+#ifndef _WIN32
+    if(conversation){
+        draft.text=std::move(conversation->draft);
+        draft.cursor=conversation->draft_cursor;
+    }
+    if(screen&&conversation)draft.approval_pending=[&]{return screen->awaiting_approval(*conversation);};
 #endif
     std::string last_model,last_modes;
     for(;;){
@@ -765,7 +696,35 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
             last_model=std::move(model);
             last_modes=std::move(modes);
         }
-        std::unique_ptr<char,decltype(&free)> line(jobs.readline("❯ "),free);
+#ifndef _WIN32
+        std::unique_ptr<char,decltype(&free)> line(guided?editable_input("❯ ",nullptr,false,[&]{
+            jobs.refresh();
+            if(jobs.on_idle)jobs.on_idle();
+        },&draft):jobs.readline("❯ "),free);
+        if(guided&&draft.paused){
+            screen->tick();
+            const auto choice=terminal_choice(approval_choices(!a->verbose),0,content_top,[&]{
+                jobs.refresh();
+                if(jobs.on_idle)jobs.on_idle();
+            },true);
+            if(interrupted==SIGINT){
+                conversation->queue.clear();
+                jobs.cancel(conversation->job);
+            }else if(input_closed){
+                conversation->draft=std::move(draft.text);
+                conversation->draft_cursor=draft.cursor;
+                return false;
+            }else if(choice&&*choice>=0){
+                jobs.respond(conversation->job,*choice);
+            }
+            continue;
+        }
+#else
+        std::unique_ptr<char,decltype(&free)> line(guided?editable_input("❯ ",nullptr,false,[&]{
+            jobs.refresh();
+            if(jobs.on_idle)jobs.on_idle();
+        },&draft):jobs.readline("❯ "),free);
+#endif
         if(!line){
             if(interrupted==SIGINT&&!input_closed){
 #ifndef _WIN32
@@ -789,6 +748,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
 #endif
             if(conversation&&revision!=a->session_revision)conversation->reset_context=true;
             if(selected<0||selected==2)return false;
+            if(!selected)continue;
             if(selected==3){if(conversation)return true;reset_session(a);}
             clear_page();
             if(a->error[0])fprintf(stderr,"%s\n",a->error);
@@ -813,26 +773,8 @@ static void show_token_usage(J *usage,J *config){
     else menu_text(tr("  无法读取累计 Token 用量。"));
 }
 static void show_banner(){
-    constexpr int banner_width=59;
     const bool color=terminal_supports_color();
-    const char *reset=color?"\033[0m":"";
-    if(terminal_columns()<=banner_width){
-        printf("\n  %sdesk code%s  v%s\n\n",color?"\033[3;94m":"",reset,VERSION);
-        return;
-    }
-    constexpr const char *logo[]={
-        "         __          __                               __",
-        "    ____/ /__  _____/ /__       ____ _____ ___  ____  / /_",
-        "   / __  / _ \\/ ___/ //_/ ___  / __ `/ __ `/ _ \\/ __ \\/ __/",
-        "  / /_/ /  __(__  ) ,<   /___// /_/ / /_/ /  __/ / / / /_",
-        "  \\__,_/\\___/____/_/|_|       \\__,_/\\__, /\\___/_/ /_/\\__/",
-        "                                   /____/",
-    };
-    const char *blue=color?"\033[1;94m":"";
-    int padding=roomy_interface()?2+(std::min(terminal_columns()-4,100)-banner_width)/2:0;
-    putchar('\n');
-    for(const auto *row:logo)printf("%*s%s%s%s\n",padding,"",blue,row,reset);
-    printf("%*s\n\n",banner_width+padding,"v" VERSION);
+    printf("\n  %sdesk code%s  v%s\n\n",color?"\033[3;1;94m":"",color?"\033[0m":"",VERSION);
     page_rule();
 }
 static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){

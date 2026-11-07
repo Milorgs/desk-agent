@@ -150,6 +150,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     JsonPtr data(obj());
     put(data.get(),"language",str(language_code()));put(data.get(),"config",copy(app.config));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));
     put(data.get(),"conversation",json_object_new_boolean(app.conversation_worker));put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));
+    put(data.get(),"guided_approval",json_object_new_boolean(app.guided_approval));
     put(data.get(),"shell",json_object_new_boolean(app.shell));put(data.get(),"desktop",json_object_new_boolean(app.desktop));
     put(data.get(),"record",json_object_new_boolean(app.record));put(data.get(),"verbose",json_object_new_boolean(app.verbose));put(data.get(),"max_steps",json_object_new_int(app.max_steps));
     put(data.get(),"events",json_object_new_int(events[1]));
@@ -216,7 +217,9 @@ bool Tasks::decide(int id,bool allow){refresh();Job *j=impl->find(id);return j&&
 bool Tasks::respond(int id,int answer){
     refresh();Job *j=impl->find(id);
     if(!j||!j->active||j->state!="等待确认"||answer<0||answer>3)return false;
-    return write_all(j->master,std::to_string(answer)+"\n");
+    if(!write_all(j->master,std::to_string(answer)+"\n"))return false;
+    j->state="执行中";
+    return true;
 }
 int task_worker(std::intptr_t fd){
     FILE *control=fdopen(fd,"r");if(!control)return 1;
@@ -230,6 +233,7 @@ int task_worker(std::intptr_t fd){
     JsonPtr data=read_message();if(!data)return 1;
     set_language(sget(data.get(),"language"));
     App app;
+    app.guided_approval=bget(data.get(),"guided_approval");
     app.conversation_worker=bget(data.get(),"conversation");app.config=copy(get(data.get(),"config"));
     snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));
     snprintf(app.config_dir,sizeof app.config_dir,"%s",sget(data.get(),"config_dir"));

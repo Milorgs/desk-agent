@@ -3,12 +3,16 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdio>
 #ifdef _WIN32
 #include <windows.h>
 #include <cstdarg>
 #include <unordered_map>
 #else
 #include <sys/ioctl.h>
+#include <poll.h>
+#include <termios.h>
 #include <unistd.h>
 #endif
 int terminal_rows(){
@@ -129,3 +133,107 @@ bool path_link(const fs::path &path){
 void platform_initialize(){}
 const char *env_value(const char *name){return std::getenv(name);}
 #endif
+
+std::optional<int> terminal_choice(const std::vector<std::string> &items,int initial,int top,const std::function<void()> &on_idle,bool transient){
+    if(input_closed||interrupted==SIGTERM)return -1;
+    if(!isatty(STDIN_FILENO)||!terminal_supports_ansi()||env_value("DESK_NO_ARROW"))return std::nullopt;
+    interrupted=0;
+    enum {idle=-1,end_input=-2,ignored=-3,up=256,down=257};
+#ifdef _WIN32
+    HANDLE console=GetStdHandle(STD_INPUT_HANDLE);
+    DWORD original=0;
+    if(!GetConsoleMode(console,&original))return std::nullopt;
+    auto read_key=[&]() -> int {
+        auto ready=WaitForSingleObject(console,50);
+        if(ready==WAIT_TIMEOUT)return idle;
+        if(ready!=WAIT_OBJECT_0)return end_input;
+        INPUT_RECORD event{};
+        DWORD count=0;
+        if(!ReadConsoleInputW(console,&event,1,&count)||!count)return end_input;
+        if(event.EventType!=KEY_EVENT||!event.Event.KeyEvent.bKeyDown)return ignored;
+        const auto &key=event.Event.KeyEvent;
+        if(key.wVirtualKeyCode==VK_UP)return up;
+        if(key.wVirtualKeyCode==VK_DOWN)return down;
+        if(key.wVirtualKeyCode=='D'&&(key.dwControlKeyState&(LEFT_CTRL_PRESSED|RIGHT_CTRL_PRESSED)))return 4;
+        return key.uChar.UnicodeChar;
+    };
+#else
+    termios original{};
+    if(tcgetattr(STDIN_FILENO,&original))return std::nullopt;
+    termios mode=original;
+    mode.c_lflag&=~static_cast<tcflag_t>(ICANON|ECHO);
+    mode.c_cc[VMIN]=1;
+    mode.c_cc[VTIME]=0;
+    if(tcsetattr(STDIN_FILENO,TCSANOW,&mode))return std::nullopt;
+    struct RestoreTerminal {
+        termios mode;
+        ~RestoreTerminal(){tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
+    } restore{original};
+    auto read_key=[]() -> int {
+        pollfd ready{STDIN_FILENO,POLLIN,0};
+        int result=poll(&ready,1,50);
+        if(result<0)return errno==EINTR?ignored:end_input;
+        if(!result)return idle;
+        unsigned char key=0;
+        return read(STDIN_FILENO,&key,1)==1?static_cast<int>(key):end_input;
+    };
+#endif
+    size_t selected=initial?static_cast<size_t>(initial-1):items.size()-1;
+    const int rows=terminal_rows();
+    const size_t visible=std::min(items.size(),static_cast<size_t>(rows>top?rows-top:8));
+    size_t first=0;
+    std::string typed;
+    const bool color=terminal_supports_color();
+    auto draw=[&]{
+        if(selected<first)first=selected;
+        if(selected>=first+visible)first=selected-visible+1;
+        fputs("\033[?7l",stdout);
+        for(size_t i=first;i<first+visible;i++){
+            const bool focused=i==selected;
+            printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
+                   focused?"❯ ":"  ",(i+1)%items.size(),items[i].c_str(),
+                   focused&&color?"\033[0m":"");
+        }
+        fputs("\033[?7h",stdout);
+        fflush(stdout);
+    };
+    draw();
+    auto finish=[&](int choice){
+        if(transient){printf("\033[%zuA\r\033[J",visible);fflush(stdout);}
+        return std::optional<int>{choice};
+    };
+    int escape=0;
+    while(!interrupted){
+        if(on_idle)on_idle();
+        int key=read_key();
+        if(key==end_input)break;
+        if(key==idle){if(escape==1&&transient)return finish(0);escape=0;continue;}
+        if(key==ignored)continue;
+        if(key=='\r'||key=='\n'){
+            if(typed.empty())return finish(static_cast<int>((selected+1)%items.size()));
+            auto value=strtoul(typed.c_str(),nullptr,10);
+            if(value<items.size())return finish(static_cast<int>(value));
+            typed.clear();
+            continue;
+        }
+        if(key==4){input_closed=true;break;}
+        if(key==27){escape=1;continue;}
+        if(escape==1&&(key=='['||key=='O')){escape=2;continue;}
+        const size_t previous=selected;
+        if(key==up||key==down||(escape==2&&(key=='A'||key=='B'))){
+            selected=(selected+((key==up||key=='A')?items.size()-1:1))%items.size();
+            typed.clear();
+        }else if(!escape&&(key==127||key==8)){
+            if(!typed.empty())typed.pop_back();
+        }else if(!escape&&key>='0'&&key<='9'){
+            if(typed.size()<20)typed.push_back(static_cast<char>(key));
+        }
+        if(!typed.empty()){
+            auto value=strtoul(typed.c_str(),nullptr,10);
+            if(value<items.size())selected=value?value-1:items.size()-1;
+        }
+        escape=0;
+        if(previous!=selected){printf("\033[%zuA",visible);draw();}
+    }
+    return finish(-1);
+}
