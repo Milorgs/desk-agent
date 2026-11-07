@@ -926,15 +926,15 @@ static int menu(App *a){
         }
         if(!usage&&(active_listed||!*active_model))menu_text(tr("  无法读取累计 Token 用量。"));
         page_rule();
-        int choice=arrow_menu(jobs,{tr("开始对话"),tr("选择模型"),tr("添加模型"),tr("设置"),tr("MCP 服务")});
+        int choice=arrow_menu(jobs,{tr("开始对话"),tr("选择模型"),tr("添加模型"),tr("MCP 服务"),tr("设置")});
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
         int rc=0;
         if(choice==1)conversation_menu(a,jobs,conversations);
         else if(choice==2)rc=select_model(a,jobs);
         else if(choice==3)rc=add_model(a,nullptr);
-        else if(choice==4)settings_menu(a,jobs);
-        else if(choice==5)mcp_menu(a,jobs);
+        else if(choice==4)mcp_menu(a,jobs);
+        else if(choice==5)settings_menu(a,jobs);
         if(rc)notice=a->error;
         if(interrupted==SIGTERM)return 143;
     }
