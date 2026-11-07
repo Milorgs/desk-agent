@@ -985,7 +985,7 @@ static void test_no_extra_model_prompts(void){
 static void wait_for_chat_prompt(int master,const std::string &output,const char *after){
     auto offset=output.rfind(after);CHECK(offset!=std::string::npos);
     auto tail=output.substr(offset+strlen(after));
-    CHECK(terminal_until(master,tail,"\r\n: "));
+    CHECK(terminal_until(master,tail,"\r\n❯ "));
 }
 static void leave_chat_and_exit(int master,bool english=true){
     CHECK(write(master,"\x04",1)==1);
@@ -1139,9 +1139,9 @@ static void test_chat_exit_paths(void){
         std::string output;
         if(route==4){CHECK(terminal_until(master,output,"[0] Exit"));}
         else{
-            CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));output.clear();
-            if(route==1){CHECK(write(master,"\n",1)==1);CHECK(terminal_until(master,output,": "));CHECK(output.find("Approval:")==std::string::npos);}
-            else if(route==2){CHECK(kill(child,SIGINT)==0);CHECK(terminal_until(master,output,": "));CHECK(output.find("Approval:")==std::string::npos);}
+            CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n❯ "));output.clear();
+            if(route==1){CHECK(write(master,"\n",1)==1);CHECK(terminal_until(master,output,"❯ "));CHECK(output.find("Approval:")==std::string::npos);}
+            else if(route==2){CHECK(kill(child,SIGINT)==0);CHECK(terminal_until(master,output,"❯ "));CHECK(output.find("Approval:")==std::string::npos);}
             else if(route==3){CHECK(write(master,"/\n5\n",4)==4);CHECK(terminal_until(master,output,"[7] Restore provider default"));}
         }
         CHECK(kill(child,0)==0);
@@ -1235,7 +1235,7 @@ static void test_line_editing(void){
         setenv("TERM","xterm-256color",1);setenv("INPUTRC","/dev/null",1);struct termios mode{};if(!tcgetattr(STDIN_FILENO,&mode)){mode.c_iflag&=~IUTF8;tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
         execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);
     }
-    std::string output;CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n: "));
+        std::string output;CHECK(write(master,"1\n1\n",4)==4);CHECK(terminal_until(master,output,"Approval: Ask for approval\r\n❯ "));
     for(size_t i=0;i<cases.size();i++){
         output.clear();type_terminal(master,output,cases[i].first+"\n");std::string done="EDIT_DONE_"+std::to_string(i);CHECK(terminal_until(master,output,done.c_str()));wait_for_chat_prompt(master,output,done.c_str());
         JsonPtr request(capture(&a,static_cast<int>(i)));J *messages=get(get(request.get(),"body"),"messages");CHECK(cases[i].second==sget(at(messages,alen(messages)-1),"content"));CHECK(valid_utf8(sget(at(messages,alen(messages)-1),"content")));
