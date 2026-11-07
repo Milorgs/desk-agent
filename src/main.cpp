@@ -8,6 +8,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <termios.h>
 #include <wchar.h>
 #endif
 #include <locale.h>
@@ -249,6 +250,54 @@ static int number(Tasks &jobs,int maximum){
     for(;;){
         if(input_closed||interrupted==SIGTERM)return -1;
         interrupted=0;
+#ifndef _WIN32
+        bool arrow_menu=interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO);
+        if(arrow_menu){
+            JsonPtr states(jobs.snapshot());
+            for(size_t i=0;i<alen(states.get());i++)if(bget(at(states.get(),i),"active")){arrow_menu=false;break;}
+        }
+        if(arrow_menu){
+            struct termios old{},raw{};
+            if(!tcgetattr(STDIN_FILENO,&old)){
+                raw=old;raw.c_lflag&=static_cast<unsigned long>(~(ICANON|ECHO));raw.c_cc[VMIN]=1;raw.c_cc[VTIME]=0;
+                if(!tcsetattr(STDIN_FILENO,TCSANOW,&raw)){
+                    int selected=maximum?1:0;std::string typed;
+                    auto draw=[&]{
+                        std::string shown=typed.empty()?std::to_string(selected):typed;
+                        printf("\r\033[2K%s%s",roomy_interface()?"    ":"",tr("请选择编号："));
+                        fputs(shown.c_str(),stdout);fflush(stdout);
+                    };
+                    draw();
+                    for(;;){
+                        unsigned char key=0;
+                        if(read(STDIN_FILENO,&key,1)!=1){selected=-1;break;}
+                        if(key=='\r'||key=='\n')break;
+                        if(key==3){interrupted=SIGINT;selected=-1;break;}
+                        if(key==4){input_closed=true;selected=-1;break;}
+                        if(key==127||key==8){if(!typed.empty())typed.pop_back();draw();continue;}
+                        if(key==27){
+                            unsigned char next[2]{};
+                            if(read(STDIN_FILENO,next,2)==2&&next[0]=='['){
+                                if(next[1]=='A')selected=maximum?(selected<=1?maximum:selected-1):0;
+                                else if(next[1]=='B')selected=maximum?(selected>=maximum?1:selected+1):0;
+                                typed.clear();draw();
+                            }
+                            continue;
+                        }
+                        if(key>='0'&&key<='9'){typed.push_back(static_cast<char>(key));draw();}
+                    }
+                    tcsetattr(STDIN_FILENO,TCSANOW,&old);putchar('\n');
+                    if(selected<0)return -1;
+                    if(!typed.empty()){
+                        char *end=nullptr;long value=strtol(typed.c_str(),&end,10);
+                        if(end==typed.c_str()+typed.size()&&value>=0&&value<=maximum)return static_cast<int>(value);
+                        menu_text(tr("请输入列表中的编号。"));continue;
+                    }
+                    return selected;
+                }
+            }
+        }
+#endif
         std::string prompt=std::string(roomy_interface()?"    ":"")+tr("请选择编号：");
         std::unique_ptr<char,decltype(&free)> value(jobs.readline(prompt.c_str()),free);
         if(!value){if(interrupted==SIGINT)continue;return -1;}
