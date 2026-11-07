@@ -238,10 +238,12 @@ int run_task(App *a,const char *task){
         if(!desktop_lock->acquired()){seterr(a,tr("桌面资源等待已取消、被占用或无法加锁；请返回对应对话处理已有操作。"));a->state=interrupted?"已取消":"失败";return -1;}
     }
     if(!a->messages)reset_session(a);
+    size_t history_start=alen(a->messages);
     J *user=obj();
     put(user,"role",str("user"));
     put(user,"content",str(task));
     add(a->messages,user);
+    history_checkpoint(*a,history_start);
     a->state="执行中";
     a->error[0]=0;
     if(!mcp_prepare(*a)){a->state="失败";return -1;}
@@ -338,6 +340,7 @@ int run_task(App *a,const char *task){
     if(!a->error[0]&&rc)seterr(a,interrupted?tr("任务已停止。"):tr("达到步骤上限，任务未确认完成。"));
     if(interrupted)a->state="已取消";
     else if(rc&&strcmp(a->state,"已取消"))a->state="失败";
+    history_checkpoint(*a,history_start+1);
     if(a->record)save_record(a);
     return rc;
 }

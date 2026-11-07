@@ -109,7 +109,8 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     if(!job->group||!win_pipe(payload_read,job->feed)||!win_pipe(approval_read,job->approval)||!win_pipe(job->logs,logs_write)||!win_pipe(job->events,events_write)){seterr(&app,tr("无法创建任务管道。"));return -1;}
     SECURITY_ATTRIBUTES attr{sizeof attr,nullptr,TRUE};job->cancellation.reset(CreateEventW(&attr,TRUE,FALSE,nullptr));if(!job->cancellation){seterr(&app,tr("无法创建状态管道。"));return -1;}
     for(HANDLE handle:{job->feed.get(),job->approval.get(),job->logs.get(),job->events.get()})SetHandleInformation(handle,HANDLE_FLAG_INHERIT,0);
-    JsonPtr data(obj());put(data.get(),"config",copy(app.config));put(data.get(),"language",str(language_code()));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));put(data.get(),"conversation",json_object_new_boolean(app.conversation_worker));put(data.get(),"task",str(task.c_str()));
+    JsonPtr data(obj());
+    put(data.get(),"conversation_id",str(app.conversation_id.c_str()));put(data.get(),"config",copy(app.config));put(data.get(),"language",str(language_code()));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));put(data.get(),"conversation",json_object_new_boolean(app.conversation_worker));put(data.get(),"task",str(task.c_str()));
     put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));put(data.get(),"shell",json_object_new_boolean(app.shell));put(data.get(),"desktop",json_object_new_boolean(app.desktop));put(data.get(),"record",json_object_new_boolean(app.record));put(data.get(),"verbose",json_object_new_boolean(app.verbose));put(data.get(),"max_steps",json_object_new_int(app.max_steps));
     put(data.get(),"events",json_object_new_int64(reinterpret_cast<std::intptr_t>(events_write.get())));put(data.get(),"cancel",json_object_new_int64(reinterpret_cast<std::intptr_t>(job->cancellation.get())));
     std::string body=json_object_to_json_string_ext(data.get(),JSON_C_TO_STRING_PLAIN);body+='\n';if(body.size()>250000){seterr(&app,tr("任务配置过大。"));return -1;}
@@ -147,6 +148,8 @@ int task_worker(std::intptr_t raw){
     JsonPtr data(json_tokener_parse(line.c_str()));if(!data)return 1;set_language(sget(data.get(),"language"));
     App app;app.conversation_worker=bget(data.get(),"conversation");app.config=copy(get(data.get(),"config"));snprintf(app.root,sizeof app.root,"%s",sget(data.get(),"root"));snprintf(app.config_dir,sizeof app.config_dir,"%s",sget(data.get(),"config_dir"));
     app.yes=bget(data.get(),"yes");app.auto_edit=bget(data.get(),"auto_edit");app.shell=bget(data.get(),"shell");app.desktop=bget(data.get(),"desktop");app.record=bget(data.get(),"record");app.verbose=bget(data.get(),"verbose");app.max_steps=iget(data.get(),"max_steps",20);app.task_events=static_cast<std::intptr_t>(json_object_get_int64(get(data.get(),"events")));
+    app.conversation_id=sget(data.get(),"conversation_id");
+    if(!app.conversation_id.empty())app.messages=history_context(app,app.conversation_id);
     WinHandle events(reinterpret_cast<HANDLE>(app.task_events)),cancel(reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(json_object_get_int64(get(data.get(),"cancel")))));
     SetHandleInformation(control.get(),HANDLE_FLAG_INHERIT,0);SetHandleInformation(events.get(),HANDLE_FLAG_INHERIT,0);SetHandleInformation(cancel.get(),HANDLE_FLAG_INHERIT,0);
     auto cleanup=[](App *value){app_cleanup(value);};std::unique_ptr<App,decltype(cleanup)> guard(&app,cleanup);

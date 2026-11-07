@@ -23,3 +23,6 @@ No model settings, API keys or conversation records are included in this package
 Uninstall: remove ~/.local/bin/desk and ~/.local/share/desk-agent/installed.
 Your model settings remain separate; delete them only if you intend to remove
 saved credentials and preferences.
+
+Interactive chats are saved automatically in ~/.config/desk-agent/history.
+Reopen desk in the same workspace to continue them. Delete chats from the chat picker.

@@ -371,8 +371,29 @@ struct Conversation {
     std::string displayed{};
     struct Request {std::string text;JsonPtr settings;};
     std::vector<Request> queue{};
+    std::string id{};
 
 };
+static bool persist_conversation(App &app,Conversation &item){
+    if(item.id.empty()){char id[33];id_string(id);item.id=id;}
+    if(history_save(app,item.id,item.title,item.config.get()))return true;
+    set_notice(tr("无法保存对话记录，请检查本机配置目录。"));
+    return false;
+}
+static void show_conversation_history(App &app,const Conversation &item){
+    JsonPtr record(history_read(app,item.id));
+    J *messages=get(record.get(),"transcript");
+    for(size_t i=0;i<alen(messages);i++){
+        J *message=at(messages,i);
+        const char *role=sget(message,"role");
+        if(!strcmp(role,"user"))printf("\n❯ %s\n",sget(message,"content"));
+        else if(!strcmp(role,"assistant")){
+            J *content=get(message,"content");
+            if(json_object_is_type(content,json_type_string))printf("\n%s\n",json_object_get_string(content));
+            else for(size_t j=0;j<alen(content);j++)if(!strcmp(sget(at(content,j),"type"),"text"))printf("\n%s\n",sget(at(content,j),"text"));
+        }
+    }
+}
 static std::string conversation_title(std::string_view source,bool automatic){
     if(!valid_utf8(source))return {};
     auto first=source.find_first_not_of(" \t\r\n");
@@ -400,6 +421,7 @@ static void sync_conversation_models(const App &app,std::vector<Conversation> &i
     for(auto &item:items){
         const bool changed=!same_model(item.config.get(),app.config);
         item.config.reset(copy(app.config));
+        if(!item.id.empty())history_save(app,item.id,item.title,item.config.get());
         if(changed){
             if(item.messages)item.messages.reset(arr());
             item.reset_context=true;
@@ -571,6 +593,7 @@ public:
         app.error[0]=0;
         JsonPtr settings(conversation_settings(app,item.reset_context));
         if(!item.job){
+            persist_conversation(app,item);
             app.conversation_worker=true;
             app.guided_approval=terminal_supports_ansi()&&!env_value("DESK_NO_ARROW");
             item.job=jobs.start(app,task);
@@ -709,6 +732,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
     clear_page();
     if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
     show_notice();
+    if(conversation)show_conversation_history(*a,*conversation);
     printf(tr("  工作目录：%s\n"),a->root);
     menu_text(tr("任务及工具结果会发送到配置的 API。"));
 #ifndef _WIN32
@@ -801,7 +825,10 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
             last_modes.clear();
             continue;
         }
-        if(conversation&&conversation->title.empty())conversation->title=conversation_title(task,true);
+        if(conversation){
+            if(conversation->title.empty())conversation->title=conversation_title(task,true);
+            persist_conversation(*a,*conversation);
+        }
 #ifndef _WIN32
         if(screen&&conversation){
             if(task.size()==1&&task[0]>='0'&&task[0]<='3'&&jobs.respond(conversation->job,task[0]-'0'))continue;
@@ -821,18 +848,18 @@ static void show_banner(){
     printf("\n  %sdesk code%s  v%s\n\n",color?"\033[3;1;94m":"",color?"\033[0m":"",VERSION);
     page_rule();
 }
-static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items){
+static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &items,bool direct=false){
 #ifndef _WIN32
     ConversationScreen screen(*a,jobs,items);
 #endif
-    bool new_chat=false;
+    bool new_chat=direct;
     while(interrupted!=SIGTERM&&!input_closed){
         const int count=static_cast<int>(items.size());
         const int create=count+1,rename=count+2,remove=count+3;
         int choice=create;
         if(!new_chat){
             clear_page();
-            menu_text(tr("\n选择对话（仅本次运行保留）"));
+            menu_text(tr("\n选择对话"));
             if(items.empty())menu_text(tr("还没有对话。"));
             std::vector<std::string> options;
             for(auto &item:items){
@@ -870,23 +897,28 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             if(deleting){
                 menu_printf(tr("删除「%s」？"),title_of(*item));
                 if(arrow_menu(jobs,{tr("确认删除"),tr("取消")},0)==1){
+                    if(!history_save(*a,item->id,item->title,item->config.get(),true)){
+                        set_notice(tr("无法删除本机对话记录。"));continue;
+                    }
                     if(item->job)jobs.remove(item->job);
                     items.erase(item);
                 }
             }else{
                 auto title=conversation_title(request_text(jobs,tr("新标题（空行取消）：")),false);
-                if(!title.empty())item->title=std::move(title);
+                if(!title.empty()){item->title=std::move(title);persist_conversation(*a,*item);}
             }
             continue;
         }
         if(choice==create){
             if(config_valid(a,a->config)){set_notice(tr("请先选择 [3] 添加模型，或选择 [2] 选择模型。"));return;}
             items.push_back({{},JsonPtr(arr()),JsonPtr(copy(a->config))});
+            persist_conversation(*a,items.back());
         }
         auto selected=items.begin()+(choice-1);
         auto &item=*selected;
         JsonPtr previous(a->messages);
         a->messages=item.messages.release();
+        a->conversation_id=item.id;
         json_object_put(a->config);a->config=copy(item.config.get());
         a->state="等待任务";
         #ifndef _WIN32
@@ -898,6 +930,8 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
 #endif
         item.messages.reset(a->messages);a->messages=previous.release();
         item.config.reset(copy(a->config));
+        persist_conversation(*a,item);
+        a->conversation_id.clear();
         std::rotate(items.begin(),selected,selected+1);
         if(interrupted==SIGTERM)return;
         // Terminal EOF closes the current chat. The selector gets a fresh input.
@@ -905,11 +939,23 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
         if(interrupted==SIGINT)interrupted=0;
     }
 }
-static int menu(App *a){
+static int menu(App *a,bool direct=false){
     InterfaceScreen interface;
     std::string notice;
     Tasks jobs;
     std::vector<Conversation> conversations;
+    JsonPtr saved(history_list(*a));
+    for(size_t i=0;i<alen(saved.get());i++){
+        J *entry=at(saved.get(),i);
+        J *profile=get(get(a->store,"profiles"),sget(entry,"profile"));
+        JsonPtr selected(copy(profile?profile:a->config));
+        App view;
+        view.config=selected.get();
+        snprintf(view.config_dir,sizeof view.config_dir,"%s",a->config_dir);
+        std::string id=sget(entry,"id");
+        conversations.push_back({sget(entry,"title"),JsonPtr(history_context(view,id)),std::move(selected)});
+        conversations.back().id=std::move(id);
+    }
     size_t synced_config=a->config_revision;
     jobs.on_idle=[&]{
         if(synced_config!=a->config_revision){
@@ -920,6 +966,7 @@ static int menu(App *a){
         advance_conversations(jobs,conversations);
 #endif
     };
+    if(direct)conversation_menu(a,jobs,conversations,true);
     for(;;){
         if(input_closed)return 0;
         clear_page();
@@ -1096,8 +1143,7 @@ static int run_cli(int argc,char **argv){
         goto cleanup;
     }
     if(task&&!strcmp(task,"chat")){
-        Tasks jobs;
-        rc=chat(&a,jobs)?1:0;
+        rc=menu(&a,true);
     }else if(task){
         status(&a);
         rc=run_task(&a,task)?1:0;

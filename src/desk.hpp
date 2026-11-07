@@ -19,7 +19,7 @@
 #include <vector>
 #include <functional>
 #include <optional>
-#define VERSION "1.9.2"
+#define VERSION "1.10.0"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -34,6 +34,7 @@ struct App {
     bool yes=false, auto_edit=false, shell=true, desktop=false, record=false, verbose=false, progress_visible=false;
     bool progress_animated=false;
     bool conversation_worker=false, guided_approval=false;
+    std::string conversation_id{};
     size_t session_revision=0;
     size_t config_revision=0;
     std::string progress_text{};
@@ -105,6 +106,11 @@ bool approval_required(const App &app,Operation operation=Operation::Other);
 const char *permission_name(const App &app);
 const char *reasoning_name(const char *effort);
 int approve(App *a,const char *description,Operation operation=Operation::Other);
+J *history_list(const App &app);
+J *history_read(const App &app,const std::string &id);
+J *history_context(const App &app,const std::string &id);
+bool history_save(const App &app,const std::string &id,const std::string &title,J *config,bool deleted=false);
+void history_checkpoint(App &app,size_t first);
 void id_string(char out[33]);
 double monotime(void);
 int store_load(App *a);

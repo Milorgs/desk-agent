@@ -19,7 +19,8 @@ from a normal process, the secure UAC desktop, or applications without controls.
 
 Configuration: %LOCALAPPDATA%\desk-agent\settings.json (current user + SYSTEM ACL).
 Language preference: same folder, ui.json.
-Session records are OFF by default. --record saves them under the same folder's sessions directory.
+Interactive chats are saved automatically in %LOCALAPPDATA%\desk-agent\history.
+--record also exports individual task records to the sessions directory.
 No system/persona/language prompt is added to model calls. Provider replies are not translated.
 
 Uninstall: delete the installation folder, and remove its entry from your USER Path.

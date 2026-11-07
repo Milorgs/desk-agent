@@ -148,6 +148,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     if(pipe2(payload,O_CLOEXEC)){seterr(&app,tr("无法创建任务管道。"));return -1;}
     if(pipe2(events,O_CLOEXEC|O_NONBLOCK)){close(payload[0]);close(payload[1]);seterr(&app,tr("无法创建状态管道。"));return -1;}
     JsonPtr data(obj());
+    put(data.get(),"conversation_id",str(app.conversation_id.c_str()));
     put(data.get(),"language",str(language_code()));put(data.get(),"config",copy(app.config));put(data.get(),"root",str(root));put(data.get(),"config_dir",str(app.config_dir));
     put(data.get(),"conversation",json_object_new_boolean(app.conversation_worker));put(data.get(),"task",str(task.c_str()));put(data.get(),"yes",json_object_new_boolean(app.yes));put(data.get(),"auto_edit",json_object_new_boolean(app.auto_edit));
     put(data.get(),"guided_approval",json_object_new_boolean(app.guided_approval));
@@ -242,6 +243,8 @@ int task_worker(std::intptr_t fd){
     if(app.task_events>=0)fcntl(app.task_events,F_SETFD,FD_CLOEXEC);
     auto cleanup=[](App *a){app_cleanup(a);};std::unique_ptr<App,decltype(cleanup)> guard(&app,cleanup);
     std::string task=sget(data.get(),"task");
+    app.conversation_id=sget(data.get(),"conversation_id");
+    if(!app.conversation_id.empty())app.messages=history_context(app,app.conversation_id);
     for(;;){
         if(interrupted==SIGTERM)break;
         interrupted=0;
