@@ -862,8 +862,8 @@ static int menu(App *a){
     }
 }
 static void help(void){
-    menu_text(tr("运行 desk 后，使用数字菜单完成对话和设置。"));
-    menu_text(tr("desk [选项] [任务|config|doctor|inspect]\n无任务参数打开数字菜单。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
+    menu_text(tr("运行 desk 后，使用数字菜单；也可以像 Claude Code 一样直接开始对话。"));
+    menu_text(tr("desk [选项] [chat|任务|config|doctor|inspect]\n无任务参数打开数字菜单。\ndesk chat 直接进入对话。\ndesk -p \"需求\" 执行一次请求并退出。\n--workspace 目录\n--provider 配置名\n--yes 自动批准操作\n--no-shell 关闭命令工具\n--allow-desktop 开启桌面工具\n--app 应用名称（inspect）\n--max-steps 1..100\n--record 保存私有会话记录\n--verbose 显示详细工具过程\n--version 查看版本\n--help 帮助"));
 }
 static int run_cli(int argc,char **argv){
     setlocale(LC_ALL,"");
@@ -896,6 +896,15 @@ static int run_cli(int argc,char **argv){
         if(!strcmp(arg,"--help")||!strcmp(arg,"-h")){
             help();
             goto cleanup;
+        }
+        if(!strcmp(arg,"-p")||!strcmp(arg,"--print")){
+            if(i+1>=argc){
+                rc=2;
+                fputs(tr("-p 需要一个需求文本。\n"),stderr);
+                goto cleanup;
+            }
+            task=argv[++i];
+            continue;
         }
         if(!strcmp(arg,"--lang")){i++;continue;}
         if(!strcmp(arg,"--yes"))a.yes=true;
@@ -977,7 +986,10 @@ static int run_cli(int argc,char **argv){
         rc=1;
         goto cleanup;
     }
-    if(task){
+    if(task&&!strcmp(task,"chat")){
+        Tasks jobs;
+        rc=chat(&a,jobs)?1:0;
+    }else if(task){
         status(&a);
         rc=run_task(&a,task)?1:0;
         if(rc)fprintf(stderr,"%s\n",a.error);
