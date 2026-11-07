@@ -94,7 +94,7 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
     if(secret||!GetConsoleMode(console,&mode)||!terminal_supports_ansi())return input(prompt,fallback,secret);
     if(input_closed)return nullptr;
     std::wstring text=draft?wide(draft->text):std::wstring{};
-    size_t point=text.size();
+    size_t point=draft?wide(draft->text.substr(0,std::min(draft->text.size(),static_cast<size_t>(std::max(0,draft->cursor))))).size():text.size();
     wchar_t pending_surrogate=0;
     if(draft){draft->paused=false;}
     auto previous=[&](size_t offset){
@@ -159,6 +159,12 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
         const auto &key=record.Event.KeyEvent;
         bool ctrl=(key.dwControlKeyState&(LEFT_CTRL_PRESSED|RIGHT_CTRL_PRESSED))!=0;
         if(ctrl&&key.wVirtualKeyCode=='D'){input_closed=true;break;}
+        if(draft&&(key.wVirtualKeyCode==VK_F2||key.wVirtualKeyCode==VK_F3)){
+            draft->text=utf8(text);
+            draft->cursor=static_cast<int>(utf8(std::wstring_view(text).substr(0,point)).size());
+            fputs("\r\033[2K",stdout);
+            return _strdup(key.wVirtualKeyCode==VK_F2?"/model":"/reasoning");
+        }
         if(key.wVirtualKeyCode==VK_RETURN){
             putchar('\n');
             auto line=utf8(text);

@@ -1037,10 +1037,12 @@ static void test_settings_redraw(){
     CHECK(output.rfind("\033[1;1H\033[J")!=std::string::npos);output.erase(0,output.rfind("\033[1;1H\033[J"));
     CHECK(terminal_until(master,output,"Select a number:"));auto screen=output;
     CHECK(screen.find("[1] Interface language")!=std::string::npos);
+    CHECK(screen.find("Reasoning mode")==std::string::npos);
+    CHECK(screen.find("Change model ID")==std::string::npos);
     CHECK(screen.find("Desktop tools enabled")!=std::string::npos);
     CHECK(screen.find("[1] Enable")==std::string::npos);
     // A failed connection test remains visible on the settings page.
-    output.clear();CHECK(write(master,"6\n",2)==2);
+    output.clear();CHECK(write(master,"5\n",2)==2);
     CHECK(terminal_until(master,output,"Add a model and enter an API key first."));CHECK(terminal_until(master,output,"Select a number:"));
     CHECK(output.rfind("\033[1;1H\033[J")!=std::string::npos);
     screen=output.substr(output.rfind("\033[1;1H\033[J"));
@@ -1375,6 +1377,17 @@ static void test_guided_approval(){
     CHECK(terminal_until(master,output,"DRAFT_RECEIVED"));
     wait_for_chat_prompt(master,output,"DRAFT_RECEIVED");
     output.clear();
+    type_terminal(master,output,"draft kept");
+    type_terminal(master,output,"\x1bOR");
+    CHECK(terminal_until(master,output,"❯ 1. Off"));
+    output.clear();type_terminal(master,output,"5\n");
+    CHECK(terminal_until(master,output,"Reasoning: High"));
+    CHECK(terminal_until(master,output,"draft kept"));
+    type_terminal(master,output,std::string(10,'\x7f'));
+    type_terminal(master,output,"\x1bOQ");
+    CHECK(terminal_until(master,output,"model-test (openai)"));
+    output.clear();type_terminal(master,output,"0\n");
+    CHECK(terminal_until(master,output,"❯ "));
     type_terminal(master,output,"/");
     CHECK(terminal_until(master,output,"❯ 1. New conversation"));
     output.clear();

@@ -335,7 +335,7 @@ static void reasoning_menu(App *a,Tasks &jobs){
 static void settings_menu(App *a,Tasks &jobs){
     for(;;){
         clear_page();show_notice();
-        int choice=menu_choices(jobs,tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));if(choice<=0)return;
+        int choice=menu_choices(jobs,tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 连接测试（少量 API 用量）\n  [0] 返回"));if(choice<=0)return;
         a->error[0]=0;
         if(choice==1)language_menu(a,jobs);
         else if(choice==2){
@@ -348,13 +348,11 @@ static void settings_menu(App *a,Tasks &jobs){
         }else if(choice==4){
             std::string name=sget(a->config,"profile");
             if(configure(a,jobs,name.c_str(),nullptr,false))fprintf(stderr,"%s\n",a->error);
-        }else if(choice==5)model_id_menu(a,jobs);
-        else if(choice==6){
+        }else if(choice==5){
             menu_text(tr("发送最小工具调用测试（少量 API 用量），不发送当前会话。"));
             if(api_check(a,a->config))fprintf(stderr,"%s\n",a->error);
             else set_notice(tr("连接成功，工具调用已验证。测试未操作电脑。"));
         }
-        else if(choice==7)reasoning_menu(a,jobs);
         if(a->error[0]){set_notice(a->error);a->error[0]=0;}
         if(interrupted==SIGTERM||input_closed)return;
     }
@@ -709,7 +707,7 @@ static void mcp_menu(App *a,Tasks &jobs){
     }
 }
 static int chat_menu(App *a,Tasks &jobs){
-    int choice=menu_choices(jobs,tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"),nullptr,-1,true);if(choice<=0)return 0;
+    int choice=menu_choices(jobs,tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [9] 切换模型 ID\n  [0] 返回输入"),nullptr,-1,true);if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)settings_menu(a,jobs);
@@ -722,6 +720,7 @@ static int chat_menu(App *a,Tasks &jobs){
     else if(choice==6)approval_menu(a,jobs);
     else if(choice==7)return 2;
     else if(choice==8)mcp_menu(a,jobs);
+    else if(choice==9)model_id_menu(a,jobs);
     return interrupted==SIGTERM?-1:1;
 }
 static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
@@ -760,6 +759,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
         std::string modes=std::string(language_code())+" "+reasoning_name(sget(a->config,"reasoning_effort"))+" "+permission_name(*a);
         if(model!=last_model||modes!=last_modes){
             printf(tr("  当前模型：%s\n"),model.c_str());
+            puts(tr("  F2 切换模型 · F3 推理强度"));
             printf(tr("推理模式：%s · 批准模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")),permission_name(*a));
             last_model=std::move(model);
             last_modes=std::move(modes);
@@ -804,13 +804,16 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
         }
         std::string task=line.get();
         if(task.empty())continue;
-        if(task=="/"){
+        if(task=="/"||task=="/model"||task=="/reasoning"){
             size_t revision=a->session_revision;
             a->error[0]=0;
 #ifndef _WIN32
             if(screen)screen->current=nullptr;
 #endif
-            int selected=chat_menu(a,jobs);
+            int selected=1;
+            if(task=="/model")select_model(a,jobs);
+            else if(task=="/reasoning")reasoning_menu(a,jobs);
+            else selected=chat_menu(a,jobs);
 #ifndef _WIN32
             if(screen){screen->current=conversation;if(conversation)conversation->displayed.clear();}
 #endif

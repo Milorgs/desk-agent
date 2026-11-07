@@ -87,13 +87,13 @@ Chats are saved locally and listed by workspace. Reopen them to continue, rename
 [0] 退出 / Exit
 ```
 
-用方向键和回车选择菜单，也可输入编号。在对话中输入 `/` 打开操作菜单。Linux 下：
+对话中按 `F2` 切换模型，按 `F3` 调整推理强度。用方向键和回车选择菜单，也可输入编号。在对话中输入 `/`，选择“选择模型”“推理模式”或“切换模型 ID”。Linux 下：
 
 - `Ctrl+D`：返回选择对话，任务继续运行。
 - `Ctrl+C`：停止当前任务。
 - `0`：普通需求内容，不是退出键。
 
-Use the arrow keys and Enter, or type an option number. Type `/` in a chat to open its action menu. On Linux:
+In a chat, press `F2` to switch models or `F3` to adjust reasoning. Use the arrow keys and Enter, or type an option number. Type `/` in a chat to select a model, reasoning level, or model ID. On Linux:
 
 - `Ctrl+D`: return to the conversation list while the task continues.
 - `Ctrl+C`: stop the current task.
@@ -101,9 +101,9 @@ Use the arrow keys and Enter, or type an option number. Type `/` in a chat to op
 
 ## 安装包和源码 / Packages and source
 
-最新版本：**1.10.0**。Linux 包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 及系统运行库；Windows 包面向 Windows 10/11 x64。
+最新版本：**1.10.1**。Linux 包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 及系统运行库；Windows 包面向 Windows 10/11 x64。
 
-Latest version: **1.10.0**. The Linux package is built on Ubuntu 22.04 and requires glibc 2.35+ plus system runtime libraries. The Windows package targets Windows 10/11 x64.
+Latest version: **1.10.1**. The Linux package is built on Ubuntu 22.04 and requires glibc 2.35+ plus system runtime libraries. The Windows package targets Windows 10/11 x64.
 
 也可以直接进入对话或执行一次请求：
 

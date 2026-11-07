@@ -102,11 +102,19 @@ bool terminal_eof(){
     char marker;
     return read(STDIN_FILENO,&marker,1)==0;
 }
-struct EditorState {char *line=nullptr;bool done=false,installed=false;};
+struct EditorState {char *line=nullptr;bool done=false,installed=false;std::string action;};
 EditorState *editor=nullptr;
 void accepted_line(char *line){
     editor->line=line;editor->done=true;
     rl_callback_handler_remove();editor->installed=false;
+}
+int choose_chat_model(int,int){
+    if(editor)editor->action="/model";
+    return 0;
+}
+int choose_chat_reasoning(int,int){
+    if(editor)editor->action="/reasoning";
+    return 0;
 }
 struct EditorSession {
     EditorState state;
@@ -119,7 +127,11 @@ struct EditorSession {
         rl_bind_key('\t',rl_insert);
         rl_variable_bind("horizontal-scroll-mode","on");
     }
-    ~EditorSession(){if(state.installed)rl_callback_handler_remove();editor=nullptr;}
+    ~EditorSession(){
+        for(const char *sequence:{"\033OQ","\033OR","\033[12~","\033[13~"})rl_bind_keyseq(sequence,rl_insert);
+        if(state.installed)rl_callback_handler_remove();
+        editor=nullptr;
+    }
 };
 }
 void terminal_message(const std::string &text){
@@ -141,6 +153,10 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
         EditorSession session(prompt);
         if(draft){
             draft->paused=false;
+            rl_bind_keyseq("\033OQ",choose_chat_model);
+            rl_bind_keyseq("\033OR",choose_chat_reasoning);
+            rl_bind_keyseq("\033[12~",choose_chat_model);
+            rl_bind_keyseq("\033[13~",choose_chat_reasoning);
             if(!draft->text.empty()){
                 rl_replace_line(draft->text.c_str(),0);
                 rl_point=draft->cursor;
@@ -169,6 +185,12 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
                 rl_forced_update_display();
             }
             if(rc>0&&(ready.revents&(POLLIN|POLLHUP)))rl_callback_read_char();
+            if(draft&&!session.state.done&&!session.state.action.empty()){
+                draft->text.assign(rl_line_buffer,static_cast<size_t>(rl_end));
+                draft->cursor=rl_point;
+                fputs("\r\033[2K",stdout);
+                return strdup(session.state.action.c_str());
+            }
             if(draft&&!session.state.done&&rl_last_func==rl_insert&&rl_end==1&&rl_line_buffer[0]=='/'){
                 draft->text.clear();draft->cursor=0;
                 fputs("\r\033[2K",stdout);
