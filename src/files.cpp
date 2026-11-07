@@ -134,12 +134,20 @@ static void search_walk(Search *s,const char *path,int depth){
     if(!data){s->skipped++;return;}
     s->bytes+=n;
     if(!utf8_text(data,n)){s->skipped++;free(data);return;}
+    // Find each match in the whole buffer, then count the newlines skipped to
+    // reach it. Scanning per line with strstr re-read the rest of the file for
+    // every line, which made files without a match quadratic.
+    const std::string_view query(s->query);
+    char *const limit=data+n;
     size_t line=1;
-    for(char *p=data;*p&&!search_limit(s);line++){
-        char *end=strchr(p,'\n');
-        if(!end)end=p+strlen(p);
-        char *found=strstr(p,s->query);
-        if(found&&found<end){
+    for(char *p=data;p<limit&&!search_limit(s);line++){
+        const size_t at=std::string_view(p,(size_t)(limit-p)).find(query);
+        if(at==std::string_view::npos)break;
+        char *found=p+at;
+        for(char *nl;(nl=static_cast<char *>(memchr(p,'\n',(size_t)(found-p))));p=nl+1)line++;
+        char *end=static_cast<char *>(memchr(found,'\n',(size_t)(limit-found)));
+        if(!end)end=limit;
+        {
             J *m=obj();
             const char *relative=full+strlen(s->app->root);
             if(*relative=='/')relative++;
@@ -159,7 +167,7 @@ static void search_walk(Search *s,const char *path,int depth){
             put(m,"line_truncated",json_object_new_boolean(start!=p||start+length<end));
             add(s->matches,m);
         }
-        if(!*end)break;
+        if(end==limit)break;
         p=end+1;
     }
     free(data);

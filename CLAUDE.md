@@ -8,13 +8,13 @@ C++20 终端 AI 助手，产品名 `desk code`。支持 OpenAI Chat Completions 
 make -j"$(nproc)"          # 增量构建 build/desk
 make test                  # 构建 + 跑 tests/test.cpp（已内置 DESK_NO_ARROW=1）
 make test-mcp-http         # MCP HTTP 集成测试（python3 tests/mcp_http.py）
-make sanitize              # ASan + UBSan
+make sanitize              # ASan + UBSan（会把插桩目标留在 build/obj，之后普通构建链接失败，先 rm -rf build/obj）
 make install               # 跑 ./install.sh，装到 ~/.local/bin/desk
 ```
 
 **测试必须带 `DESK_NO_ARROW=1`。** 这是 CI 的设定（`.github/workflows/test.yml`）。测试断言的是编号菜单 `[6] Extra high (xhigh)` 的文本，不设这个变量时 `terminal_choice()` 会走箭头菜单，渲染里没有方括号编号，`tests/test.cpp:1130` 必然失败。Makefile 的 `test` 目标已经带上，不要去掉。
 
-**断言数会漂移。** 正常范围 2725–2734。用未改动的 HEAD 跑同样漂移，属于既有的时序问题。`test.cpp:1118` 和 `1060` 偶发失败同理。判断回归看「FAIL 行数」而不是断言总数。
+**断言数会漂移。** 正常范围约 2734–2745。用未改动的 HEAD 跑同样漂移，属于既有的时序问题。`test.cpp:1118` 和 `1060` 偶发失败同理。判断回归看「FAIL 行数」而不是断言总数。
 
 ## 真实运行环境（已实测，不必重新探测）
 

@@ -210,6 +210,22 @@ static void test_search_and_edit(void){
     CHECK(iget(at(get(r,"matches"),49),"line",0)==50);
     json_object_put(r);
     json_object_put(v);
+    // Line numbers survive skipped lines, blank lines, a repeat on one line and
+    // a final line without a newline.
+    const char sparse[]="无关\n\n命中 一\n无关\n\n\n命中 命中 二\n无关\n末行命中";
+    fixture(&a,"/sparse.txt",sparse,strlen(sparse));
+    v=args("sparse.txt");
+    put(v,"query",str("命中"));
+    r=tool_call(&a,"search_text",v);
+    CHECK(alen(get(r,"matches"))==3&&!bget(r,"truncated"));
+    CHECK(iget(at(get(r,"matches"),0),"line",0)==3);
+    CHECK(!strcmp(sget(at(get(r,"matches"),0),"text"),"命中 一"));
+    CHECK(iget(at(get(r,"matches"),1),"line",0)==7);
+    CHECK(!strcmp(sget(at(get(r,"matches"),1),"text"),"命中 命中 二"));
+    CHECK(iget(at(get(r,"matches"),2),"line",0)==9);
+    CHECK(!strcmp(sget(at(get(r,"matches"),2),"text"),"末行命中"));
+    json_object_put(r);
+    json_object_put(v);
     app_cleanup(&a);
 }
 static void test_config(void){

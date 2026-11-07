@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "desk.hpp"
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -67,6 +68,9 @@ J *run_command(App *a,const char *command,int timeout_ms){
     }
     int status=0;
     bool reaped=false,timed=false,failed=false;
+    // Start polling at 1 ms so quick commands return at once, then back off to
+    // 25 ms: long commands no longer wake the process a thousand times a second.
+    long pause_ns=1000000;
     while(!interrupted){
         check_exit(*a);
         progress_tick(a);
@@ -85,9 +89,10 @@ J *run_command(App *a,const char *command,int timeout_ms){
             break;
         }
         struct timespec pause={
-            0,1000000
+            0,pause_ns
         };
         nanosleep(&pause,NULL);
+        pause_ns=std::min(pause_ns*2,25000000L);
     }
     kill(-child,SIGKILL);
     if(!reaped){
