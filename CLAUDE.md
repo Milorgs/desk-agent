@@ -47,6 +47,12 @@ tools/verify-ui.sh        # 构建 + 测试 + 安装 + 截图到 /tmp/desk-verif
 
 改界面后必须看图，不要只信断言。
 
+## 版本与发布
+
+版本号写在四处，升级时一起改：`src/desk.hpp` 的 `VERSION`、`CMakeLists.txt`、`vcpkg.json`、`README.md`（中英两行）。惯例是每次提交递增补丁号。
+
+**升版本必须同时新增 `docs/releases/v<版本>.md`**（中文段 + 英文段，格式照前一版）。推到 `main` 后 CI 的 `release` 任务会用它自动发布 GitHub Release，缺这个文件该任务直接失败。
+
 ## 代码约定
 
 - 界面文案全部走 `src/i18n.cpp` 的翻译表。新增硬编码中文会让英文模式回落，测试不报但用户能看见。
