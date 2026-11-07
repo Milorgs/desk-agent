@@ -264,9 +264,10 @@ static int number(Tasks &jobs,int maximum){
                     int selected=maximum?1:0;std::string typed;
                     auto draw=[&]{
                         std::string shown=typed.empty()?std::to_string(selected):typed;
-                        printf("\r\033[2K%s%s",roomy_interface()?"    ":"",tr("请选择编号："));
+                        printf("\r\033[2K%s❯ %s",roomy_interface()?"    ":"",tr("请选择"));
                         fputs(shown.c_str(),stdout);fflush(stdout);
                     };
+                    printf("  %s\n",tr("↑/↓ 选择 · Enter 确认 · 直接输入数字"));
                     draw();
                     for(;;){
                         unsigned char key=0;
@@ -705,7 +706,7 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
             last_model=std::move(model);
             last_modes=std::move(modes);
         }
-        std::unique_ptr<char,decltype(&free)> line(jobs.readline(": "),free);
+        std::unique_ptr<char,decltype(&free)> line(jobs.readline("❯ "),free);
         if(!line){
             if(interrupted==SIGINT&&!input_closed){
 #ifndef _WIN32
