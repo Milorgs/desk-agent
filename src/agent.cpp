@@ -42,7 +42,7 @@ J *context(App *a,J *tools){
     }
     return selected;
 }
-static J *arguments(const char *text){
+J *parse_tool_arguments(const char *text){
     size_t length=strlen(text);
     if(length>CONTEXT_LIMIT||!valid_utf8(std::string_view(text,length)))return nullptr;
     // json-c 0.18's STRICT string check treats non-ASCII signed chars as
@@ -90,7 +90,7 @@ static int validate_calls(App *a,J *calls){
             seterr(a,tr("工具调用格式无效。"));
             return -1;
         }
-        J *args=arguments(sget(f,"arguments"));
+        J *args=parse_tool_arguments(sget(f,"arguments"));
         if(!args){
             seterr(a,tr("工具参数不是完整的 JSON 对象，本轮操作未执行。"));
             return -1;
@@ -272,6 +272,8 @@ int run_task(App *a,const char *task){
     history_checkpoint(*a,history_start);
     a->state="执行中";
     a->error[0]=0;
+    a->task_tokens=0;
+    const double task_started=monotime();
     if(!mcp_prepare(*a)){a->state="失败";return -1;}
     JsonPtr tool_owner(schemas(a));
     J *tools=tool_owner.get();
@@ -279,6 +281,7 @@ int run_task(App *a,const char *task){
     std::vector<Observation> seen;
     int failures=0,rc=-1;
     bool trimmed=false,desktop_unverified=false;
+    const char *reply_marker=a->conversation_id.empty()?"":ui_assistant_marker(ui_color());
     for(int step=1;step<=a->max_steps&&!interrupted;step++){
         J *history=context(a,tools);
         if(!history)break;
@@ -288,12 +291,26 @@ int run_task(App *a,const char *task){
             trimmed=true;
         }
         J *reply=nullptr;
+        bool streamed=false;
         {
             ThinkingProgress thinking(*a);
             if(a->verbose)printf(tr("[%d/%d] 正在请求模型…\n"),step,a->max_steps);
             else progress(a,tr("正在思考…"));
             fflush(stdout);
+            // Print text as it arrives; the first chunk clears the "thinking"
+            // row and opens the reply so the transcript fills in live.
+            a->stream_text=[a,&streamed,reply_marker](const std::string &part){
+                if(!streamed){
+                    streamed=true;
+                    progress_clear(a);
+                    putchar('\n');
+                    fputs(reply_marker,stdout);
+                }
+                fputs(part.c_str(),stdout);
+                fflush(stdout);
+            };
             reply=api_complete(a,a->config,history,tools);
+            a->stream_text=nullptr;
         }
         json_object_put(history);
         if(!reply)break;
@@ -314,14 +331,16 @@ int run_task(App *a,const char *task){
                 break;
             }
             progress_clear(a);
-            puts(sget(reply,"content"));
+            if(streamed)putchar('\n');
+            else printf("%s%s\n",reply_marker,sget(reply,"content"));
             add(a->messages,reply);
             a->state="本轮结束";
             rc=0;
             break;
         }
         add(a->messages,reply);
-        if(a->verbose&&*sget(reply,"content"))puts(sget(reply,"content"));
+        if(streamed)putchar('\n');
+        else if(a->verbose&&*sget(reply,"content"))printf("%s%s\n",reply_marker,sget(reply,"content"));
         for(size_t i=0;i<alen(calls);i++){
             J *call=at(calls,i),*fn=get(call,"function");
             if(interrupted){
@@ -329,11 +348,12 @@ int run_task(App *a,const char *task){
                 goto done;
             }
             const char *name=sget(fn,"name");
-            J *args=arguments(sget(fn,"arguments"));
+            J *args=parse_tool_arguments(sget(fn,"arguments"));
             if(a->verbose)show_call(name,args);
             else progress(a,activity(name));
             double tool_started=monotime();
             J *result=tool_call(a,name,args);
+            a->progress_line=false;
             bool denied=bget(result,"denied");
             bool failed=tool_failed(result),loop=repeated(seen,name,args,result);
             recovery(a,unresolved,name,args,failed);
@@ -366,6 +386,19 @@ int run_task(App *a,const char *task){
     if(!a->error[0]&&rc)seterr(a,interrupted?tr("任务已停止。"):tr("达到步骤上限，任务未确认完成。"));
     if(interrupted)a->state="已取消";
     else if(rc&&strcmp(a->state,"已取消"))a->state="失败";
+    {
+        // One closing line per turn: how long it worked, tokens used, outcome.
+        const char *outcome=rc==0?tr("完成"):interrupted||!strcmp(a->state,"已取消")?tr("已停止"):tr("未完成");
+        std::string line="  "+std::string(tr("用时"))+" "+elapsed_label(monotime()-task_started);
+        if(a->task_tokens){
+            char tokens[64];
+            snprintf(tokens,sizeof tokens,tr(" · %s 词元"),token_label(a->task_tokens).c_str());
+            line+=tokens;
+        }
+        line+=" · ";line+=outcome;
+        printf("\n%s\n",ui_paint(rc==0?Tone::Dim:Tone::Warning,line).c_str());
+        fflush(stdout);
+    }
     history_checkpoint(*a,history_start+1);
     if(a->record)save_record(a);
     return rc;

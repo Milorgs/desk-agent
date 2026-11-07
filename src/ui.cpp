@@ -12,6 +12,7 @@ const char *sgr(Tone tone){
     case Tone::Accent:return "\033[38;5;111m";
     case Tone::Success:return "\033[38;5;114m";
     case Tone::Warning:return "\033[38;5;179m";
+    case Tone::Orange:return "\033[38;5;208m";
     case Tone::Error:return "\033[38;5;174m";
     case Tone::Rule:return "\033[38;5;240m";
     case Tone::Plain:break;
@@ -167,6 +168,7 @@ std::string ui_box(std::string_view title,std::string_view body,int width){
 }
 
 const char *ui_bullet(){return "⏺";}
+const char *ui_assistant_marker(bool color){return color?"\033[97m●\033[0m ":"● ";}
 const char *ui_result(){return "⎿";}
 const char *ui_prompt(){return "❯";}
 

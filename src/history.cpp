@@ -65,7 +65,7 @@ J *history_list(const App &app){
     for(auto &record:records)add(entries.get(),record.release());
     return entries.release();
 }
-bool history_save(const App &app,const std::string &id,const std::string &title,J *config,bool deleted){
+bool history_save(const App &app,const std::string &id,const std::string &title,J *config,bool deleted,const char *approval_mode){
     if(!valid_id(id))return false;
     if(mkdirs((std::string(app.config_dir)+"/history").c_str(),0700))return false;
     ResourceLock lock(app.config_dir);
@@ -76,6 +76,10 @@ bool history_save(const App &app,const std::string &id,const std::string &title,
     put(metadata.get(),"profile",str(sget(config,"profile")));
     put(metadata.get(),"model",str(sget(config,"model")));
     put(metadata.get(),"deleted",json_object_new_boolean(deleted));
+    if(!deleted&&approval_mode){
+        put(metadata.get(),"approval_mode",str(approval_mode));
+        put(metadata.get(),"reasoning_effort",str(sget(config,"reasoning_effort")));
+    }
     if(deleted)for(auto key:{"title","profile","model"})json_object_object_del(metadata.get(),key);
     double now=std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
     put(metadata.get(),"updated",json_object_new_double(now));

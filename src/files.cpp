@@ -64,7 +64,7 @@ static J *file_read(App *a,const char *path){
     if(resolve_file(a,path,full))return err(a->error);
     size_t n=0;
     char *bytes=read_bytes(full,FILE_LIMIT,&n);
-    if(!bytes)return err(tr("无法读取文件，文件可能不是普通文件或超过 64 KB。"));
+    if(!bytes)return err(tr("无法读取文件，文件可能不是普通文件或超过 256 KB。"));
     if(!utf8_text(bytes,n)){
         free(bytes);
         return err(tr("只支持 UTF-8 文本文件。"));
@@ -104,7 +104,7 @@ struct Search {
     bool truncated=false;
 };
 static bool search_limit(Search *s){
-    if(interrupted||s->entries>=10000||s->files>=1000||s->bytes>=8*1024*1024||alen(s->matches)>=50||monotime()>s->until)s->truncated=true;
+    if(interrupted||s->entries>=40000||s->files>=4000||s->bytes>=32*1024*1024||alen(s->matches)>=120||monotime()>s->until)s->truncated=true;
     return s->truncated;
 }
 static bool search_skip(const char *name){
@@ -118,7 +118,7 @@ static void search_walk(Search *s,const char *path,int depth){
     auto status=fs::symlink_status(source,ec);if(ec){s->skipped++;return;}
     char full[PATH_MAX];if(resolve_file(s->app,path,full)){s->skipped++;return;}
     if(fs::is_directory(status)){
-        if(depth>=16){s->truncated=true;return;}
+        if(depth>=24){s->truncated=true;return;}
         fs::directory_iterator directory(fs_path(full),ec);if(ec){s->skipped++;return;}
         for(auto it=directory;it!=fs::directory_iterator{}&&!search_limit(s);it.increment(ec)){
             if(ec){s->skipped++;break;}
@@ -179,7 +179,7 @@ static J *file_search(App *a,J *args){
     if(resolve_file(a,sget(args,"path"),full))return err(a->error);
     std::error_code ec;auto status=fs::status(fs_path(full),ec);
     if(ec||(!fs::is_directory(status)&&!fs::is_regular_file(status)))return err(tr("搜索路径须为存在的文件或目录。"));
-    Search s={.app=a,.query=query,.matches=arr(),.until=monotime()+3};
+    Search s={.app=a,.query=query,.matches=arr(),.until=monotime()+5};
     search_walk(&s,full,0);
     if(interrupted){json_object_put(s.matches);return err(tr("搜索已取消。"));}
     J *r=obj();
@@ -193,7 +193,7 @@ static J *file_search(App *a,J *args){
 static J *file_write(App *a,J *args,const char *preview){
     const char *path=sget(args,"path"),*content=sget(args,"content");
     size_t n=strlen(content);
-    if(n>FILE_LIMIT)return err(tr("文件超过 64 KB 限制。"));
+    if(n>FILE_LIMIT)return err(tr("文件超过 256 KB 限制。"));
     char full[PATH_MAX];
     if(resolve_file(a,path,full))return err(a->error);
     std::error_code ec;auto status=fs::symlink_status(fs_path(full),ec);
@@ -217,7 +217,7 @@ static J *file_write(App *a,J *args,const char *preview){
         free(old);
         return err(tr("无法分配写入预览内存，原文件未修改。"));
     }
-    int allowed=approve(a,description,Operation::FileEdit);
+    int allowed=approve(a,description,Operation::FileEdit,preview?tr("编辑文件"):tr("写入文件"));
     free(description);
     if(!allowed){
         free(old);
@@ -275,7 +275,7 @@ static J *file_edit(App *a,J *args){
         return err(tr("old_text 必须在文件中精确匹配一次；请加入相邻上下文后重试。"));
     }
     size_t size=strlen(content)-strlen(before)+strlen(after),offset=(size_t)(match-content);
-    if(size>FILE_LIMIT)return err(tr("修改后的文件超过 64 KB 限制。"));
+    if(size>FILE_LIMIT)return err(tr("修改后的文件超过 256 KB 限制。"));
     std::string updated(content);
     updated.replace(offset,strlen(before),after);
     const std::string preview=std::string(tr("替换前：\n"))+before+tr("\n替换后：\n")+after;
@@ -308,7 +308,7 @@ static void definition(J *tools,const char *name,const char *description,const c
             !strcmp(fields[i],"old_text")?"Exact original text, including whitespace. Must occur exactly once; include surrounding lines to disambiguate.":
             !strcmp(fields[i],"new_text")?"Replacement text; empty string deletes the matched text.":
             !strcmp(fields[i],"query")?"Case-sensitive literal single-line search text, not a regular expression (1..256 bytes).":
-            !strcmp(fields[i],"content")?"Complete UTF-8 file contents (up to 64 KB).":
+            !strcmp(fields[i],"content")?"Complete UTF-8 file contents (up to 256 KB).":
             !strcmp(fields[i],"command")?
 #ifdef _WIN32
             "One noninteractive Windows PowerShell command. Runs independently in the workspace; variables and directory changes do not persist.":
@@ -355,8 +355,8 @@ static J *builtin_tools(){
             "ref","text"
         };
         definition(tools,"list_files","List up to 200 immediate workspace entries. Explore relevant directories before guessing file names.",path,1);
-        definition(tools,"search_text","Recursively locate literal text with file paths and line numbers. Skips symlinks, protected files, common dependency/build directories and non-UTF-8 or >64 KB files. Up to 50 matching lines, 1000 files, depth 16, 8 MB, 3 seconds; inspect truncated and skipped before claiming absence. Narrow path to continue.",search,2);
-        definition(tools,"read_file","Read a complete UTF-8 file (max 64 KB) and its SHA256. Required before editing an existing file; search snippets are not sufficient.",path,1);
+        definition(tools,"search_text","Recursively locate literal text with file paths and line numbers. Skips symlinks, protected files, common dependency/build directories and non-UTF-8 or >256 KB files. Up to 120 matching lines, 4000 files, depth 24, 32 MB, 5 seconds; inspect truncated and skipped before claiming absence. Narrow path to continue.",search,2);
+        definition(tools,"read_file","Read a complete UTF-8 file (max 256 KB) and its SHA256. Required before editing an existing file; search snippets are not sufficient.",path,1);
         definition(tools,"edit_file","Replace one unique exact text occurrence in an existing file. Prefer this for small edits. Supply SHA256 from read_file; use longer old_text if ambiguous. Preserves other bytes and creates a backup. Result verified means bytes were read back, not that the user's goal or tests passed.",edit,4);
         definition(tools,"write_file","Create a UTF-8 file or replace its entire contents. Prefer edit_file for small changes. Read existing file first and supply SHA256; null only for a new file. Original bytes are backed up and new bytes read back. Verify the task's actual behavior separately.",write,3);
         definition(tools,"run_shell",
@@ -421,7 +421,7 @@ J *tool_call(App *a,const char *name,J *args){
     if(!strcmp(name,"edit_file"))return file_edit(a,args);
     if(!strcmp(name,"write_file"))return file_write(a,args,NULL);
     if(!strcmp(name,"run_shell")){
-        if(!approve(a,sget(args,"command"))){
+        if(!approve(a,sget(args,"command"),Operation::Other,tr("执行命令"))){
             J *r=err(tr("用户拒绝执行，不要绕过。"));
             put(r,"denied",json_object_new_boolean(1));
             return r;
@@ -429,7 +429,7 @@ J *tool_call(App *a,const char *name,J *args){
         return run_command(a,sget(args,"command"),30000);
     }
     if(!strcmp(name,"desktop_snapshot"))return desktop_snapshot(a,sget(args,"app"));
-    if(!approve(a,json_object_to_json_string_ext(args,JSON_C_TO_STRING_PLAIN))){
+    if(!approve(a,json_object_to_json_string_ext(args,JSON_C_TO_STRING_PLAIN),Operation::Other,tr("操作桌面"))){
         J *r=err(tr("用户拒绝桌面操作，不要绕过。"));
         put(r,"denied",json_object_new_boolean(1));
         return r;

@@ -1,3 +1,4 @@
+#include <sys/ioctl.h>
 #include "tasks.hpp"
 #include <sys/file.h>
 #include <sys/wait.h>
@@ -34,6 +35,10 @@ struct Job {
     bool thinking=false;
     double thinking_started=0;
     double changed_at=0;
+    // Wall time of the current turn and tokens the worker has reported for it.
+    double turn_started=0;
+    std::uint64_t tokens=0;
+    std::string pending_events;
     std::string title,workspace,state="执行中",output;
 };
 void drain(Job &j){
@@ -52,6 +57,12 @@ void drain(Job &j){
 }
 void task_event(App &app,char state){
     if(app.task_events>=0){ssize_t n=write(app.task_events,&state,1);(void)n;}
+}
+void task_tokens(App &app){
+    if(app.task_events<0)return;
+    char message[9];message[0]='k';
+    std::uint64_t value=app.task_tokens;memcpy(message+1,&value,sizeof value);
+    ssize_t n=write(app.task_events,message,sizeof message);(void)n;
 }
 ResourceLock::ResourceLock(App &app,bool desktop){
     std::string directory=desktop?app.config_dir:std::string(app.root)+"/.desk-agent";
@@ -104,18 +115,29 @@ Tasks::~Tasks(){
 void Tasks::refresh(){
     for(auto &j:impl->jobs){
         char events[128];ssize_t n;
-        while((n=read(j.events,events,sizeof events))>0)for(ssize_t k=0;k<n;k++){
+        while((n=read(j.events,events,sizeof events))>0)j.pending_events.append(events,static_cast<size_t>(n));
+        size_t used=0;
+        for(size_t k=0;k<j.pending_events.size();k++){
+            char event=j.pending_events[k];
+            if(event=='k'){
+                // A token update carries an 8-byte count; wait for all of it.
+                if(k+9>j.pending_events.size())break;
+                std::uint64_t value=0;memcpy(&value,j.pending_events.data()+k+1,sizeof value);
+                j.tokens=value;k+=8;used=k+1;continue;
+            }
+            used=k+1;
             j.changed_at=monotime();
-            if(events[k]=='t'){j.thinking=true;j.thinking_started=monotime();continue;}
-            if(events[k]=='e'){j.thinking=false;continue;}
+            if(event=='t'){j.thinking=true;j.thinking_started=monotime();continue;}
+            if(event=='e'){j.thinking=false;continue;}
             j.thinking=false;
-            if(events[k]=='d'){j.state="已完成";j.active=false;}
-            else if(events[k]=='f'){j.state="失败";j.active=false;}
-            else if(events[k]=='c'){j.state="已取消";j.active=false;}
-            else if(events[k]=='a')j.state="等待确认";
-            else if(events[k]=='q')j.state="等待资源";
-            else if(events[k]=='r')j.state="执行中";
+            if(event=='d'){j.state="已完成";j.active=false;}
+            else if(event=='f'){j.state="失败";j.active=false;}
+            else if(event=='c'){j.state="已取消";j.active=false;}
+            else if(event=='a')j.state="等待确认";
+            else if(event=='q')j.state="等待资源";
+            else if(event=='r')j.state="执行中";
         }
+        j.pending_events.erase(0,used);
         drain(j);
         if(!j.alive)continue;
         if(j.retired&&monotime()-j.retired_at>10)kill(j.pid,SIGKILL);
@@ -161,7 +183,11 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     fflush(nullptr);
     int master=-1;
     pid_t controller=getpid();
-    pid_t pid=forkpty(&master,nullptr,nullptr,nullptr);
+    // Give the worker the controller's size so panels and rules it prints fit
+    // the real window instead of falling back to the borderless layout.
+    struct winsize size{};
+    const bool sized=ioctl(STDOUT_FILENO,TIOCGWINSZ,&size)==0&&size.ws_col>0;
+    pid_t pid=forkpty(&master,nullptr,nullptr,sized?&size:nullptr);
     if(pid==0){
         if(prctl(PR_SET_PDEATHSIG,SIGTERM)||getppid()!=controller)_exit(127);
         close(payload[1]);close(events[0]);
@@ -175,7 +201,7 @@ int Tasks::start(App &app,const std::string &task,const std::string &workspace){
     body+='\n';
     bool sent=write_all(payload[1],body);
     if(!sent){close(payload[1]);kill(pid,SIGTERM);while(waitpid(pid,nullptr,0)<0&&errno==EINTR){}close(master);close(events[0]);seterr(&app,tr("无法传递任务配置。"));return -1;}
-    Job j;j.id=impl->next++;j.pid=pid;j.master=master;j.events=events[0];j.feed=payload[1];j.title=task;j.workspace=root;j.changed_at=monotime();
+    Job j;j.id=impl->next++;j.pid=pid;j.master=master;j.events=events[0];j.feed=payload[1];j.title=task;j.workspace=root;j.changed_at=monotime();j.turn_started=monotime();
     int id=j.id;impl->jobs.push_back(std::move(j));return id;
 }
 J *Tasks::snapshot(){
@@ -188,6 +214,8 @@ J *Tasks::snapshot(){
         bool thinking=j.thinking&&j.active&&!j.cancelled;
         put(v,"thinking",json_object_new_boolean(thinking));
         put(v,"thinking_seconds",json_object_new_double(thinking?monotime()-j.thinking_started:0));
+        put(v,"turn_seconds",json_object_new_double(j.active&&j.turn_started>0?monotime()-j.turn_started:0));
+        put(v,"tokens",json_object_new_int64(static_cast<int64_t>(j.tokens)));
         add(items,v);
     }return items;
 }
@@ -208,6 +236,7 @@ bool Tasks::resume(int id,const std::string &task,J *settings){
     std::string text=json_object_to_json_string_ext(message.get(),JSON_C_TO_STRING_PLAIN);if(text.size()>250000)return false;text+='\n';
     if(!write_all(j->feed,text))return false;
     j->active=true;j->cancelled=false;j->state="执行中";j->title=task;j->changed_at=monotime();
+    j->turn_started=monotime();j->tokens=0;
     return true;
 }
 char *Tasks::readline(const char *prompt){

@@ -30,6 +30,8 @@ public:
     bool acquired() const { return fd>=0; }
 };
 void task_event(App &app,char state);
+// Report the running task's token count to the controller.
+void task_tokens(App &app);
 int task_worker(std::intptr_t fd);
 J *conversation_settings(const App &app,bool reset);
 void apply_conversation_settings(App &app,J *settings);

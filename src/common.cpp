@@ -3,6 +3,7 @@
 #include "mcp.hpp"
 #include "ui.hpp"
 #ifndef _WIN32
+#include <termios.h>
 #include <unistd.h>
 #endif
 #include <openssl/rand.h>
@@ -18,6 +19,14 @@ std::string elapsed_label(double seconds){
     char text[64];
     if(elapsed<60)snprintf(text,sizeof text,"%llus",elapsed);
     else snprintf(text,sizeof text,"%llum %02llus",elapsed/60,elapsed%60);
+    return text;
+}
+// Compact token counts: 980, 12.4k, 1.2M.
+std::string token_label(std::uint64_t tokens){
+    char text[32];
+    if(tokens<1000)snprintf(text,sizeof text,"%llu",static_cast<unsigned long long>(tokens));
+    else if(tokens<1000000)snprintf(text,sizeof text,"%.1fk",tokens/1000.0);
+    else snprintf(text,sizeof text,"%.1fM",tokens/1000000.0);
     return text;
 }
 static void draw_progress(App *app){
@@ -55,7 +64,12 @@ void progress(App *app,const char *text){
         draw_progress(app);
         app->progress_visible=true;
     }
-    else {app->progress_animated=false;draw_progress(app);putchar('\n');}
+    else {
+        app->progress_animated=false;draw_progress(app);putchar('\n');
+        // Remember that the last line printed is a status line, so an approval
+        // panel that follows can replace it instead of stacking under it.
+        app->progress_line=true;
+    }
     fflush(stdout);
 }
 void progress_tick(App *app){
@@ -176,31 +190,54 @@ std::vector<std::string> approval_choices(bool preview){
     items.emplace_back(tr("取消"));
     return items;
 }
-int approve(App *a,const char *description,Operation operation){
+int approve(App *a,const char *description,Operation operation,const char *title){
     if(interrupted)return 0;
     if(!approval_required(*a,operation)){if(a->verbose)printf("\n%s\n",description);return 1;}
     progress_clear(a);
     bool compact=!a->verbose&&(a->task_events<0||a->conversation_worker);
-    // The operation preview reads as a block so commands and diffs stay distinct
-    // from the surrounding conversation.
+    // One panel per request, like a permission dialog: the operation kind on
+    // the top edge, what will run inside, and the question at the bottom. The
+    // choices are drawn directly beneath it, so nothing is shown twice.
+    // A worker's "Running a command…" line is now redundant: the panel names
+    // the operation. Erase it when it is the line just above.
+    if(a->progress_line&&a->task_events>=0&&a->conversation_worker){
+        fputs("\033[1A\r\033[2K",stdout);
+        a->progress_line=false;
+    }
     auto preview=[&](bool truncate){
-        size_t count=strlen(description);
+        std::string body(description);
         if(truncate){
-            count=strcspn(description,"\n");
-            if(count>300)count=300;
-            while(count&&(static_cast<unsigned char>(description[count])&0xc0)==0x80)count--;
+            // The compact view shows only the summary line (command, or the
+            // file and its size); "Show full operation" reveals the rest.
+            size_t cut=body.find('\n');
+            if(cut==std::string::npos)cut=body.size();
+            if(cut>300)cut=300;
+            while(cut&&cut<body.size()&&(static_cast<unsigned char>(body[cut])&0xc0)==0x80)cut--;
+            if(cut<body.size()){body.resize(cut);body+="…";}
         }
-        std::string body(description,count);
-        if(truncate&&description[count])body+="…";
+        const int columns=terminal_columns();
+        const int width=columns>0?std::min(std::max(columns-4,36),100):0;
+        std::string heading=title&&*title?title:tr("需要批准");
         putchar('\n');
-        fputs(ui_paint(Tone::Warning,std::string("  ┃ ")).c_str(),stdout);
-        std::string joined;
-        for(size_t i=0;i<body.size();i++){
-            // Newlines repeat the gutter so multi-line commands stay aligned.
-            joined+=(body[i]=='\n'&&i+1<body.size())?std::string("\n  ┃ "):std::string(1,body[i]);
+        if(width>=36){
+            std::string panel=ui_box(heading,body+"\n\n"+tr("是否允许此次操作？"),width);
+            // Tint the frame so the request stands out from the transcript.
+            size_t start=0;
+            while(start<panel.size()){
+                auto end=panel.find('\n',start);
+                auto line=panel.substr(start,end==std::string::npos?std::string::npos:end-start);
+                fputs("  ",stdout);
+                fputs(line.c_str(),stdout);
+                putchar('\n');
+                if(end==std::string::npos)break;
+                start=end+1;
+            }
+        }else{
+            fputs(ui_paint(Tone::Warning,heading).c_str(),stdout);
+            putchar('\n');
+            puts(body.c_str());
         }
-        fputs(ui_paint(Tone::Plain,joined).c_str(),stdout);
-        putchar('\n');
+        fflush(stdout);
     };
     preview(compact);
     if(a->task_events<0&&!isatty(STDIN_FILENO))return 0;
@@ -209,7 +246,6 @@ int approve(App *a,const char *description,Operation operation){
         fflush(stdout);
         task_event(*a,'a');
         if(a->task_events<0){
-            puts(ui_paint(Tone::Warning,tr("操作需要批准")).c_str());
             if(auto choice=terminal_choice(approval_choices(compact),0,1,{},true)){
                 if(*choice==3){preview(false);continue;}
                 yes=*choice==1;
@@ -217,12 +253,25 @@ int approve(App *a,const char *description,Operation operation){
             }
         }
         const char *prompt=a->task_events>=0&&!a->conversation_worker?tr("等待批准此次操作。"):compact?tr("请求批准：[1] 允许 [2] 拒绝 [3] 查看完整操作 [0] 取消："):tr("允许此次操作？[1] 允许 [2] 拒绝 [0] 取消：");
+#ifndef _WIN32
+        // When the controller answers on our behalf, its digit must not be
+        // echoed into the transcript.
+        struct termios saved{};bool quiet=false;
+        if(a->guided_approval&&isatty(STDIN_FILENO)&&!tcgetattr(STDIN_FILENO,&saved)){
+            struct termios mode=saved;mode.c_lflag&=~static_cast<tcflag_t>(ECHO);
+            quiet=!tcsetattr(STDIN_FILENO,TCSANOW,&mode);
+        }
+#endif
         char *value=input(a->guided_approval?"":prompt,nullptr,false);
+#ifndef _WIN32
+        if(quiet)tcsetattr(STDIN_FILENO,TCSANOW,&saved);
+#endif
         if(value&&compact&&!strcmp(value,"3")){free(value);preview(false);continue;}
         yes=value&&!strcmp(value,"1");free(value);break;
     }
     task_event(*a,'r');
-    if(yes&&!a->verbose)progress(a,tr("正在执行操作…"));
+    // A conversation worker's progress is in the controller's status line.
+    if(yes&&!a->verbose&&!(a->conversation_worker&&a->guided_approval))progress(a,tr("正在执行操作…"));
     return yes;
 }
 

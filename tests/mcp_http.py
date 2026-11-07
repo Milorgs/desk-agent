@@ -77,7 +77,7 @@ for native,source in ((False,'file'),(True,'url'),(False,'paste')):
         if pid==0:
             fcntl.ioctl(0,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
             env={k:v for k,v in os.environ.items() if not k.startswith('DESK_')}
-            env.update(TERM='xterm-256color',INPUTRC='/dev/null',XDG_CONFIG_HOME=root+'/config',XDG_STATE_HOME=root+'/state',DESK_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1',DESK_MODEL='test',DESK_API_KEY='model-test-secret',DESK_API_TYPE='anthropic' if native else 'openai')
+            env.update(TERM='xterm-256color',NO_COLOR='1',INPUTRC='/dev/null',XDG_CONFIG_HOME=root+'/config',XDG_STATE_HOME=root+'/state',DESK_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1',DESK_MODEL='test',DESK_API_KEY='model-test-secret',DESK_API_TYPE='anthropic' if native else 'openai')
             os.execve('./build/desk',['desk','--yes','--lang','en','--workspace',root],env)
         output=bytearray();page=bytearray()
         def read():
@@ -119,8 +119,8 @@ for native,source in ((False,'file'),(True,'url'),(False,'paste')):
             send('1\n1\n');until('Connected. 2 tools available.')
             send('0\n0\n');until('❯ 1. Start chat')
             send('1\n1\nUse the MCP echo tool\n');until('MODEL_MCP_DONE')
-            send('/');until('❯ 1. New conversation')
-            send('\x1b[B'*5);until('❯ 6. Approval mode')
+            send('/');until('❯ 1. Select model')
+            send('\x1b[B'*2);until('❯ 3. Approval mode')
             send('\n');until('❯ 1. Ask for approval')
             send('0\n');until('❯ ')
             send('\x04');until('0. Main menu');send('0\n0\n')

@@ -44,6 +44,9 @@ struct Lines {
 };
 }
 void task_event(App &app,char event){if(app.task_events>=0){DWORD count=0;WriteFile(reinterpret_cast<HANDLE>(app.task_events),&event,1,&count,nullptr);}}
+// The Windows controller does not show live token counts yet; keep the hook so
+// the shared API code links on both platforms.
+void task_tokens(App &app){(void)app;}
 ResourceLock::ResourceLock(App &app,bool desktop){
     std::string directory=desktop?app.config_dir:std::string(app.root)+"/.desk-agent";
     if(mkdirs(directory.c_str(),0700))return;

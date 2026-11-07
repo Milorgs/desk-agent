@@ -135,7 +135,7 @@ void platform_initialize(){}
 const char *env_value(const char *name){return std::getenv(name);}
 #endif
 
-std::optional<int> terminal_choice(const std::vector<std::string> &items,int initial,int top,const std::function<void()> &on_idle,bool transient){
+std::optional<int> terminal_choice(const std::vector<std::string> &items,int initial,int top,const std::function<void()> &on_idle,bool transient,bool inline_row){
     if(items.empty())return 0;
     if(input_closed||interrupted==SIGTERM)return -1;
     if(!isatty(STDIN_FILENO)||!terminal_supports_ansi()||env_value("DESK_NO_ARROW"))return std::nullopt;
@@ -154,8 +154,8 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
         if(!ReadConsoleInputW(console,&event,1,&count)||!count)return end_input;
         if(event.EventType!=KEY_EVENT||!event.Event.KeyEvent.bKeyDown)return ignored;
         const auto &key=event.Event.KeyEvent;
-        if(key.wVirtualKeyCode==VK_UP)return up;
-        if(key.wVirtualKeyCode==VK_DOWN)return down;
+        if(key.wVirtualKeyCode==VK_UP||(inline_row&&key.wVirtualKeyCode==VK_LEFT))return up;
+        if(key.wVirtualKeyCode==VK_DOWN||(inline_row&&key.wVirtualKeyCode==VK_RIGHT))return down;
         if(key.wVirtualKeyCode==VK_HOME)return home;
         if(key.wVirtualKeyCode==VK_END)return end;
         if(key.wVirtualKeyCode==VK_PRIOR)return page_up;
@@ -195,7 +195,26 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
     size_t first=0;
     std::string typed;
     const bool color=terminal_supports_color();
+    auto option_label=[&](size_t i,bool focused){
+        auto number=std::to_string((i+1)%items.size())+".";
+        if(!color)return number+" "+labels[i];
+        return ui_paint(Tone::Dim,number)+" "+(focused?ui_paint(Tone::Accent,labels[i],true):labels[i]);
+    };
+    if(inline_row)visible=1;
     auto draw=[&]{
+        if(inline_row){
+            // One row: "❯ Allow   Deny   Show full   Cancel", focused one in accent.
+            std::string row="\r\033[2K";
+            for(size_t i=0;i<items.size();i++){
+                const bool focused=i==selected;
+                if(i)row+="   ";
+                row+=focused?"❯ ":"  ";
+                row+=option_label(i,focused);
+            }
+            fputs(row.c_str(),stdout);
+            fflush(stdout);
+            return;
+        }
         if(selected<first)first=selected;
         if(selected>=first+visible)first=selected-visible+1;
         fputs("\033[?7l",stdout);
@@ -204,8 +223,7 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
             // The focused row gets the accent colour and a bold label. Unselected
             // rows keep full brightness: dim text disappears on translucent
             // backgrounds, which is a common Konsole setup.
-            std::string label=std::to_string((i+1)%items.size())+". "+labels[i];
-            if(focused&&color)label=ui_paint(Tone::Accent,label,true);
+            auto label=option_label(i,focused);
             printf("\r\033[2K%s%s\n",focused?"❯ ":"  ",label.c_str());
         }
         fputs("\033[?7h",stdout);
@@ -213,7 +231,8 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
     };
     draw();
     auto finish=[&](int choice){
-        if(transient){printf("\033[%zuA\r\033[J",visible);fflush(stdout);}
+        if(inline_row){fputs("\r\033[2K",stdout);fflush(stdout);}
+        else if(transient){printf("\033[%zuA\r\033[J",visible);fflush(stdout);}
         return std::optional<int>{choice};
     };
     std::string escape;
@@ -221,7 +240,8 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
     while(!interrupted){
         if(on_idle)on_idle();
         int height=terminal_rows(),width=terminal_columns();
-        if(height!=rows||width!=columns){
+        if(inline_row&&(height!=rows||width!=columns)){rows=height;columns=width;draw();}
+        else if(height!=rows||width!=columns){
             size_t rewind=std::min(visible,capacity(height));
             printf("\033[%zuA\r\033[J",rewind);
             rows=height;columns=width;visible=capacity(rows);
@@ -253,6 +273,8 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
             if(escape.size()>2&&((key>='0'&&key<='9')||key==';')&&escape.size()<16)continue;
             if(escape=="\x1b[A"||escape=="\x1bOA")key=up;
             else if(escape=="\x1b[B"||escape=="\x1bOB")key=down;
+            else if(inline_row&&(escape=="\x1b[D"||escape=="\x1bOD"))key=up;
+            else if(inline_row&&(escape=="\x1b[C"||escape=="\x1bOC"))key=down;
             else if(escape=="\x1b[H"||escape=="\x1bOH"||escape=="\x1b[1~")key=home;
             else if(escape=="\x1b[F"||escape=="\x1bOF"||escape=="\x1b[4~")key=end;
             else if(escape=="\x1b[5~")key=page_up;
@@ -279,7 +301,7 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
             auto value=strtoul(typed.c_str(),nullptr,10);
             if(value<items.size())selected=value?value-1:items.size()-1;
         }
-        if(previous!=selected){printf("\033[%zuA",visible);draw();}
+        if(previous!=selected){if(!inline_row)printf("\033[%zuA",visible);draw();}
     }
     return finish(-1);
 }

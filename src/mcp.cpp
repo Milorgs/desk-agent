@@ -159,8 +159,9 @@ struct Client {
         J *args=get(config.get(),"args");for(size_t i=0;i<alen(args);i++)arguments.emplace_back(json_object_get_string(at(args,i)));
         std::vector<char *> argv;for(auto &arg:arguments)argv.push_back(arg.data());argv.push_back(nullptr);
         std::map<std::string,std::string> environment;
-        // Servers receive a minimal inherited environment plus explicit env entries.
-        for(const char *key:{"PATH","HOME","LANG","LC_ALL","TMPDIR","XDG_RUNTIME_DIR","DISPLAY","WAYLAND_DISPLAY"})if(const char *value=env_value(key))environment[key]=value;
+        // Keep display authentication paired with DISPLAY for headed browsers on Xwayland.
+        // Other environment variables must be explicitly configured.
+        for(const char *key:{"PATH","HOME","LANG","LC_ALL","TMPDIR","XDG_RUNTIME_DIR","DISPLAY","XAUTHORITY","WAYLAND_DISPLAY"})if(const char *value=env_value(key))environment[key]=value;
         J *env=get(config.get(),"env");if(env){json_object_object_foreach(env,key,value){environment[key]=json_object_get_string(value);}}
         std::string cwd=sget(config.get(),"cwd");if(cwd.empty())cwd=app.root;
         pid_t parent=getpid();child=fork();
@@ -320,15 +321,16 @@ struct Client {
     }
     void initialize(bool explicit_test){
         if(!*sget(config.get(),"url")){
-            if(!explicit_test){std::string preview;
-                // Environment variables and HTTP headers are omitted from the preview.
-                JsonPtr public_config(copy(config.get()));json_object_object_del(public_config.get(),"env");json_object_object_del(public_config.get(),"headers");preview="MCP "+name+"\n"+encoded(public_config.get());
-                if(!approve(&app,preview.c_str()))throw Failure("MCP server launch was not approved.");}
+            // Launching a server the user already configured is part of starting
+            // the tool, not a new operation to confirm on every request. Tool
+            // calls themselves still go through approve() in mcp_call().
 #ifndef _WIN32
             start();
 #endif
         }
-        progress(&app,tr("正在连接 MCP…"));
+        // Only the manual "test connection" dialog needs a progress line; a
+        // normal message reconnects each time and the notice is just noise.
+        if(explicit_test)progress(&app,tr("正在连接 MCP…"));
         JsonPtr params(obj());put(params.get(),"protocolVersion",str(protocol));put(params.get(),"capabilities",obj());
         J *info=obj();put(info,"name",str("desk-agent"));put(info,"version",str(VERSION));put(params.get(),"clientInfo",info);
         auto result=request("initialize",params.get());version=sget(result.get(),"protocolVersion");
@@ -432,7 +434,7 @@ J *mcp_call(App &app,const char *name,J *arguments){
     if(found==registry->tools.end())return err("Unknown MCP tool or invalid arguments.");
     auto &tool=found->second;
     std::string preview="MCP "+tool.client->name+" / "+tool.original+"\n"+encoded(arguments);
-    if(!approve(&app,preview.c_str())){J *result=err("MCP operation was not approved.");put(result,"denied",json_object_new_boolean(true));return result;}
+    if(!approve(&app,preview.c_str(),Operation::Other,tr("调用 MCP 工具"))){J *result=err("MCP operation was not approved.");put(result,"denied",json_object_new_boolean(true));return result;}
     try{
         JsonPtr params(obj());put(params.get(),"name",str(tool.original.c_str()));put(params.get(),"arguments",copy(arguments));
         auto result=tool.client->request("tools/call",params.get());

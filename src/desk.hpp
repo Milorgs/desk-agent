@@ -19,10 +19,12 @@
 #include <vector>
 #include <functional>
 #include <optional>
-#define VERSION "1.10.4"
+#define VERSION "1.10.11"
 #define CONTEXT_LIMIT 128000
-#define FILE_LIMIT 65536
-#define RESPONSE_LIMIT 4000000
+// Large enough for real source files (roughly 6000 lines); the model context
+// trims older content separately, so the limit only guards memory per file.
+#define FILE_LIMIT 262144
+#define RESPONSE_LIMIT 32000000
 using J = json_object;
 struct JsonDeleter {
     void operator()(J *value) const noexcept { json_object_put(value); }
@@ -46,6 +48,13 @@ struct App {
     const char *state="等待任务";
     void *desktop_data=nullptr;
     void *mcp_data=nullptr;
+    // Receives assistant text as it streams in; empty leaves the whole reply to
+    // be printed once the response completes.
+    std::function<void(const std::string &)> stream_text;
+    // Tokens reported by the provider during the current task, so the live
+    // status line and the closing summary can show them.
+    std::uint64_t task_tokens=0;
+    bool progress_line=false;
     CurlHandle api_http{};
 };
 extern std::atomic<int> interrupted;
@@ -55,6 +64,7 @@ void check_exit(const App &app);
 void progress_clear(App *app);
 void progress_tick(App *app);
 std::string elapsed_label(double seconds);
+std::string token_label(std::uint64_t tokens);
 const char *tr(const char *text);
 const char *language_code();
 bool set_language(const char *code);
@@ -87,12 +97,14 @@ char *read_bytes(const char *path,size_t limit,size_t *length);
 int path_suffix(char out[PATH_MAX],const char *base,const char *suffix);
 int mkdirs(const char *path,unsigned int mode);
 int atomic_file(const char *path,const void *data,size_t len,unsigned int mode);
+// inline_row lays the choices out on one line (left/right to move) so a prompt
+// can sit in a single input row, such as the approval answer under its panel.
 std::optional<int> terminal_choice(const std::vector<std::string> &items,int initial,int top,
-                                   const std::function<void()> &idle={},bool transient=false);
+                                   const std::function<void()> &idle={},bool transient=false,bool inline_row=false);
 std::vector<std::string> approval_choices(bool preview);
 char *input(const char *prompt,const char *fallback,bool secret);
-#ifndef _WIN32
 void terminal_message(const std::string &text);
+#ifndef _WIN32
 void terminal_activity(const std::string &text);
 #endif
 struct ChatDraft {
@@ -102,19 +114,25 @@ struct ChatDraft {
     std::function<bool()> approval_pending;
 };
 char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle,ChatDraft *draft=nullptr);
+// first_row is where the transcript starts filling; 0 disables the composer.
+void set_composer_layout(int input_row,int transcript_row,int first_row=1);
+#ifndef _WIN32
+void reset_transcript();
+#endif
 enum class Operation { Other, FileEdit };
 bool approval_required(const App &app,Operation operation=Operation::Other);
 const char *permission_name(const App &app);
 const char *reasoning_name(const char *effort);
-int approve(App *a,const char *description,Operation operation=Operation::Other);
+int approve(App *a,const char *description,Operation operation=Operation::Other,const char *title=nullptr);
 J *history_list(const App &app);
 J *history_read(const App &app,const std::string &id);
 J *history_context(const App &app,const std::string &id);
-bool history_save(const App &app,const std::string &id,const std::string &title,J *config,bool deleted=false);
+bool history_save(const App &app,const std::string &id,const std::string &title,J *config,bool deleted=false,const char *approval_mode=nullptr);
 void history_checkpoint(App &app,size_t first);
 void id_string(char out[33]);
 double monotime(void);
 int store_load(App *a);
+bool valid_reasoning_effort(J *config,J *value);
 int config_valid(App *a,J *config);
 J *config_default(const char *name);
 int save_config(App *a,J *config,bool clear_session=true);
@@ -123,10 +141,13 @@ int activate(App *a,const char *name);
 int config_name_valid(const char *name);
 int api_check(App *a,J *config);
 J *api_models(App *a,J *config);
+J *parse_tool_arguments(const char *text);
 J *api_complete(App *a,J *config,J *messages,J *tools);
+// Filled with streamed assistant text as it arrives; empty means wait for the
+// complete response.
 J *native_payload(J *config,J *messages,J *tools);
 J *native_response(App *a,J *data);
-J *api_request(App *a,J *config,const char *endpoint,J *payload);
+J *api_request(App *a,J *config,const char *endpoint,J *payload,void *stream=nullptr);
 J *schemas(App *a);
 J *tool_call(App *a,const char *name,J *arguments);
 J *run_command(App *a,const char *command,int timeout_ms);

@@ -1,4 +1,5 @@
 #include "desk.hpp"
+#include "tasks.hpp"
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,6 +11,99 @@ struct Buffer {
     std::string data;
     bool oversized=false;
 };
+// Incremental reader for server-sent events. Both protocols are reduced to the
+// same three outputs (text, tool calls, stop reason), so the existing response
+// validation can run unchanged on the assembled result.
+struct StreamState {
+    std::string raw;
+    std::string pending;
+    std::string event_data;
+    std::string text;
+    std::vector<std::string> ids,names,args;
+    std::string stop_reason;
+    std::string usage;
+    CURL *http=nullptr;
+    bool native=false, events=false, complete=false, invalid=false, oversized=false;
+    std::function<void(const std::string &)> delta;
+};
+static void stream_event(StreamState *st,const char *json){
+    st->events=true;
+    if(st->complete){st->invalid=true;return;}
+    if(!st->native&&!strcmp(json,"[DONE]")){st->complete=true;return;}
+    JsonPtr event(json_tokener_parse(json));
+    J *o=event.get();
+    if(!json_object_is_type(o,json_type_object)||get(o,"error")){st->invalid=true;return;}
+    const char *type=sget(o,"type");
+    if(st->native&&!strcmp(type,"message_stop")){st->complete=true;return;}
+    if(!strcmp(type,"error")){st->invalid=true;return;}
+    if(!strcmp(type,"content_block_start")){
+        J *block=get(o,"content_block");
+        if(!strcmp(sget(block,"type"),"tool_use")){
+            st->ids.push_back(sget(block,"id"));
+            st->names.push_back(sget(block,"name"));
+            st->args.emplace_back();
+        }
+    }else if(!strcmp(type,"content_block_delta")){
+        J *d=get(o,"delta");
+        const char *part=sget(d,"text");
+        if(*part){
+            st->text+=part;
+            if(st->delta)st->delta(part);
+        }
+        if(*sget(d,"partial_json")&&!st->args.empty())st->args.back()+=sget(d,"partial_json");
+    }else if(!strcmp(type,"message_delta")){
+        const char *stop=sget(get(o,"delta"),"stop_reason");
+        if(*stop)st->stop_reason=stop;
+        J *usage=get(o,"usage");
+        if(json_object_is_type(usage,json_type_object))st->usage=json_object_to_json_string_ext(usage,JSON_C_TO_STRING_PLAIN);
+    }else if(!strcmp(type,"message_start")){
+        J *usage=get(get(o,"message"),"usage");
+        if(json_object_is_type(usage,json_type_object))st->usage=json_object_to_json_string_ext(usage,JSON_C_TO_STRING_PLAIN);
+    }else{
+        J *choice=at(get(o,"choices"),0);
+        J *d=get(choice,"delta");
+        const char *part=sget(d,"content");
+        if(*part){
+            st->text+=part;
+            if(st->delta)st->delta(part);
+        }
+        J *calls=get(d,"tool_calls");
+        for(size_t i=0;i<alen(calls);i++){
+            J *call=at(calls,i),*fn=get(call,"function");
+            int index=iget(call,"index",static_cast<int>(i));
+            if(index<0||index>=12){st->invalid=true;return;}
+            while(st->ids.size()<=static_cast<size_t>(index)){st->ids.emplace_back();st->names.emplace_back();st->args.emplace_back();}
+            if(*sget(call,"id"))st->ids[index]=sget(call,"id");
+            if(*sget(fn,"name"))st->names[index]+=sget(fn,"name");
+            if(*sget(fn,"arguments"))st->args[index]+=sget(fn,"arguments");
+        }
+        const char *finish=sget(choice,"finish_reason");
+        if(*finish)st->stop_reason=finish;
+        J *usage=get(o,"usage");
+        if(json_object_is_type(usage,json_type_object))st->usage=json_object_to_json_string_ext(usage,JSON_C_TO_STRING_PLAIN);
+    }
+}
+static void stream_feed(StreamState *st,const char *bytes,size_t n){
+    st->pending.append(bytes,n);
+    size_t start=0;
+    for(;;){
+        auto end=st->pending.find('\n',start);
+        if(end==std::string::npos)break;
+        std::string line=st->pending.substr(start,end-start);
+        start=end+1;
+        if(!line.empty()&&line.back()=='\r')line.pop_back();
+        if(line.empty()&&!st->event_data.empty()){
+            stream_event(st,st->event_data.c_str());
+            st->event_data.clear();
+        }
+        if(!line.starts_with("data:"))continue;
+        auto payload=line.substr(5);
+        if(!payload.empty()&&payload.front()==' ')payload.erase(0,1);
+        if(!st->event_data.empty())st->event_data+='\n';
+        st->event_data+=payload;
+    }
+    st->pending.erase(0,start);
+}
 static size_t receive(char *p,size_t size,size_t count,void *user){
     auto *b=static_cast<Buffer *>(user);
     if(size&&count>SIZE_MAX/size)return 0;
@@ -20,6 +114,24 @@ static size_t receive(char *p,size_t size,size_t count,void *user){
     }
     try { b->data.append(p,n); }
     catch(...) { return 0; } // Exceptions must not cross libcurl's C callback.
+    return n;
+}
+static size_t stream_chunk(char *p,size_t size,size_t count,void *user){
+    auto *st=static_cast<StreamState *>(user);
+    if(size&&count>SIZE_MAX/size)return 0;
+    size_t n=size*count;
+    long status=0;
+    curl_easy_getinfo(st->http,CURLINFO_RESPONSE_CODE,&status);
+    if(status<200||status>=300)return n;
+    if(n>RESPONSE_LIMIT-st->raw.size()){
+        st->oversized=true;
+        return 0;
+    }
+    try {
+        st->raw.append(p,n);
+        stream_feed(st,p,n);
+    }
+    catch(...) { return 0; }
     return n;
 }
 static int transfer_progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl_off_t v){
@@ -34,7 +146,8 @@ static int transfer_progress(void *u,curl_off_t d,curl_off_t n,curl_off_t t,curl
     (void)v;
     return interrupted?1:0;
 }
-J *api_request(App *a,J *c,const char *endpoint,J *payload) try {
+J *api_request(App *a,J *c,const char *endpoint,J *payload,void *stream_void) try {
+    auto *stream=static_cast<StreamState *>(stream_void);
     if(config_valid(a,c))return NULL;
     char url[8192];
     if(snprintf(url,sizeof url,"%s%s",sget(c,"base_url"),endpoint)>=(int)sizeof url){
@@ -49,7 +162,7 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload) try {
         CURL *h=a->api_http.get();
         Buffer b;
         HttpHeaders headers;
-        headers.append("Accept: application/json");
+        headers.append(stream?"Accept: text/event-stream":"Accept: application/json");
         headers.append("Content-Type: application/json");
         headers.append(std::string(native?"x-api-key: ":"Authorization: Bearer ")+sget(c,"api_key"));
         if(native)headers.append(std::string("anthropic-version: ")+sget(c,"anthropic_version"));
@@ -58,10 +171,20 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload) try {
         curl_easy_setopt(h,CURLOPT_HTTPHEADER,headers.get());
         curl_easy_setopt(h,CURLOPT_FOLLOWLOCATION,0L);
         curl_easy_setopt(h,CURLOPT_CONNECTTIMEOUT,10L);
-        curl_easy_setopt(h,CURLOPT_TIMEOUT,60L);
+        // Long generations stream for minutes; the connect timeout still
+        // bounds a dead endpoint, and a stalled transfer aborts on low speed.
+        curl_easy_setopt(h,CURLOPT_TIMEOUT,600L);
+        curl_easy_setopt(h,CURLOPT_LOW_SPEED_LIMIT,1L);
+        curl_easy_setopt(h,CURLOPT_LOW_SPEED_TIME,120L);
         curl_easy_setopt(h,CURLOPT_NOSIGNAL,1L);
-        curl_easy_setopt(h,CURLOPT_WRITEFUNCTION,receive);
-        curl_easy_setopt(h,CURLOPT_WRITEDATA,&b);
+        if(stream){
+            stream->http=h;
+            curl_easy_setopt(h,CURLOPT_WRITEFUNCTION,stream_chunk);
+            curl_easy_setopt(h,CURLOPT_WRITEDATA,stream);
+        }else{
+            curl_easy_setopt(h,CURLOPT_WRITEFUNCTION,receive);
+            curl_easy_setopt(h,CURLOPT_WRITEDATA,&b);
+        }
         curl_easy_setopt(h,CURLOPT_XFERINFOFUNCTION,transfer_progress);
         curl_easy_setopt(h,CURLOPT_XFERINFODATA,a);
         curl_easy_setopt(h,CURLOPT_NOPROGRESS,0L);
@@ -72,16 +195,24 @@ J *api_request(App *a,J *c,const char *endpoint,J *payload) try {
         CURLcode rc=curl_easy_perform(h);
         long status=0;
         curl_easy_getinfo(h,CURLINFO_RESPONSE_CODE,&status);
-        if(rc!=CURLE_OK){
-            seterr(a,interrupted?tr("请求已取消。"):b.oversized?tr("API 响应超过大小限制。"):tr("API 连接失败或超时；未自动重发请求。"));
+        if(rc!=CURLE_OK||interrupted){
+            seterr(a,interrupted?tr("请求已取消。"):(stream?stream->oversized:b.oversized)?tr("API 响应超过大小限制。"):tr("API 连接失败或超时；未自动重发请求。"));
             return NULL;
         }
         if(status>=200&&status<300){
-            if(!valid_utf8(b.data)){
+            const std::string &payload=stream?stream->raw:b.data;
+            if(!valid_utf8(payload)){
                 seterr(a,tr("API 返回的文本不是有效 UTF-8。"));
                 return nullptr;
             }
-            J *data=b.data.empty()?nullptr:json_tokener_parse(b.data.c_str());
+            if(stream&&stream->events){
+                if(stream->invalid||!stream->complete||stream->stop_reason.empty()||!stream->event_data.empty()){
+                    seterr(a,tr("模型响应被截断，本轮工具未执行。"));
+                    return nullptr;
+                }
+                return obj();
+            }
+            J *data=payload.empty()?nullptr:json_tokener_parse(payload.c_str());
             if(!data||!json_object_is_type(data,json_type_object)){
                 json_object_put(data);
                 seterr(a,tr("API 未返回有效 JSON 对象，请检查接口地址。"));
@@ -282,11 +413,64 @@ J *api_complete(App *a,J *c,J *messages,J *tools){
             put(body,"tool_choice",str("auto"));
         }
     }
-    J *data=api_request(a,c,native?"/messages":"/chat/completions",body);
+    StreamState stream;
+    stream.native=native;
+    // Streamed text is handed to the caller as it arrives; tool arguments and
+    // the stop reason are assembled into a normal response below so the same
+    // validation runs for both paths.
+    stream.delta=[a](const std::string &part){
+        if(a->stream_text)a->stream_text(part);
+    };
+    put(body,"stream",json_object_new_boolean(1));
+    J *data=api_request(a,c,native?"/messages":"/chat/completions",body,&stream);
     json_object_put(body);
     if(!data)return NULL;
+    if(stream.events){
+        if(!native&&stream.stop_reason!="length"&&stream.stop_reason!=(stream.ids.empty()?"stop":"tool_calls")){
+            json_object_put(data);
+            seterr(a,tr("模型拒绝或尚未结束响应，本轮工具未执行。"));
+            return nullptr;
+        }
+        // Rebuild the response the non-streaming path expects.
+        J *usage=json_tokener_parse(stream.usage.c_str());
+        put(data,"usage",usage?usage:obj());
+        if(native){
+            J *blocks=arr();
+            if(!stream.text.empty()){J *b=obj();put(b,"type",str("text"));put(b,"text",str(stream.text.c_str()));add(blocks,b);}
+            for(size_t i=0;i<stream.ids.size();i++){
+                J *b=obj();put(b,"type",str("tool_use"));put(b,"id",str(stream.ids[i].c_str()));put(b,"name",str(stream.names[i].c_str()));
+                J *input=stream.args[i].empty()?obj():parse_tool_arguments(stream.args[i].c_str());
+                put(b,"input",input);
+                add(blocks,b);
+            }
+            put(data,"content",blocks);
+            put(data,"stop_reason",str(stream.stop_reason.c_str()));
+        }else{
+            J *choices=arr(),*choice=obj(),*message=obj();
+            put(message,"role",str("assistant"));
+            if(!stream.text.empty())put(message,"content",str(stream.text.c_str()));
+            J *calls=arr();
+            for(size_t i=0;i<stream.ids.size();i++){
+                J *call=obj(),*f=obj();
+                put(call,"id",str(stream.ids[i].c_str()));
+                put(call,"type",str("function"));
+                put(f,"name",str(stream.names[i].c_str()));
+                put(f,"arguments",json_object_new_string_len(stream.args[i].data(),static_cast<int>(stream.args[i].size())));
+                put(call,"function",f);
+                add(calls,call);
+            }
+            if(alen(calls))put(message,"tool_calls",calls);
+            else json_object_put(calls);
+            put(choice,"message",message);
+            put(choice,"finish_reason",str(stream.stop_reason.c_str()));
+            add(choices,choice);
+            put(data,"choices",choices);
+        }
+    }
+    a->task_tokens=add_tokens(a->task_tokens,reported_tokens(get(data,"usage"),native));
+    task_tokens(*a);
     if(!record_tokens(*a,c,reported_tokens(get(data,"usage"),native)))
-        fputs(tr("无法保存 Token 用量。\n"),stderr);
+        fputs(tr("无法保存词元用量。\n"),stderr);
     J *result=NULL;
     if(native)result=native_response(a,data);
     else{

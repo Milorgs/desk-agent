@@ -88,6 +88,10 @@ void check_exit(const App &app){(void)app;}
 
 
 // Read console events so chat menus and task updates do not wait for Enter.
+void terminal_message(const std::string &text){
+    fwrite(text.data(),1,text.size(),stdout);
+    fflush(stdout);
+}
 char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle,ChatDraft *draft){
     HANDLE console=GetStdHandle(STD_INPUT_HANDLE);
     DWORD mode=0;

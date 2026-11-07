@@ -106,6 +106,14 @@ static int normalize(App *a,J *c){
     }
     return 0;
 }
+bool valid_reasoning_effort(J *config,J *value){
+    if(!value)return true;
+    if(!json_object_is_type(value,json_type_string))return false;
+    std::string_view effort=json_object_get_string(value);
+    if(effort=="minimal"&&!strcmp(sget(config,"protocol"),"anthropic"))return false;
+    return effort.empty()||effort=="none"||effort=="minimal"||effort=="low"||effort=="medium"
+        ||effort=="high"||effort=="xhigh"||effort=="max";
+}
 int config_valid(App *a,J *c){
     if(!config_name_valid(sget(c,"profile"))){
         seterr(a,tr("配置名称不能为空，最多 40 字，不含空格或路径符号。"));
@@ -125,10 +133,7 @@ int config_valid(App *a,J *c){
         seterr(a,tr("密钥包含无效字符。"));
         return -1;
     }
-    J *reasoning=get(c,"reasoning_effort");
-    const char *effort=sget(c,"reasoning_effort");
-    bool supported=!*effort||!strcmp(effort,"none")||!strcmp(effort,"minimal")||!strcmp(effort,"low")||!strcmp(effort,"medium")||!strcmp(effort,"high")||!strcmp(effort,"xhigh")||!strcmp(effort,"max");
-    if((reasoning&&!json_object_is_type(reasoning,json_type_string))||!supported||(!strcmp(protocol,"anthropic")&&!strcmp(effort,"minimal"))){
+    if(!valid_reasoning_effort(c,get(c,"reasoning_effort"))){
         seterr(a,tr("推理档位与接口不兼容，请重新选择或恢复服务商默认。"));return -1;
     }
     int tokens=iget(c,"max_tokens",4096);

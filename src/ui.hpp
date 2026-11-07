@@ -5,7 +5,7 @@
 #include <vector>
 // Shared visual language for every page and chat renderer.
 // Colour is dropped automatically when the terminal cannot show it.
-enum class Tone { Plain, Dim, Bold, Accent, Success, Warning, Error, Rule };
+enum class Tone { Plain, Dim, Bold, Accent, Success, Warning, Orange, Error, Rule };
 bool ui_color();
 std::string ui_paint(Tone tone,std::string_view text,bool bold=false);
 // Display width in terminal cells; UTF-8 aware without depending on the locale.
@@ -18,6 +18,7 @@ std::vector<std::string> ui_wrap(std::string_view text,int width);
 std::string ui_box(std::string_view title,std::string_view body,int width);
 // Glyphs that give the interface its shape.
 const char *ui_bullet();
+const char *ui_assistant_marker(bool color);
 const char *ui_result();
 const char *ui_prompt();
 const char *ui_spinner(size_t frame);
