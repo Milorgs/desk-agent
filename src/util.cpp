@@ -104,7 +104,10 @@ bool terminal_eof(){
 }
 struct EditorState {char *line=nullptr;bool done=false,installed=false;std::string action;};
 EditorState *editor=nullptr;
+bool activity_visible=false;
+std::string last_activity;
 void accepted_line(char *line){
+    activity_visible=false;
     editor->line=line;editor->done=true;
     rl_callback_handler_remove();editor->installed=false;
 }
@@ -131,11 +134,13 @@ struct EditorSession {
         for(const char *sequence:{"\033OQ","\033OR","\033[12~","\033[13~"})rl_bind_keyseq(sequence,rl_insert);
         if(state.installed)rl_callback_handler_remove();
         editor=nullptr;
+        activity_visible=false;
     }
 };
 }
 void terminal_message(const std::string &text){
     if(text.empty())return;
+    activity_visible=false;
     if(!editor||!editor->installed){fwrite(text.data(),1,text.size(),stdout);fflush(stdout);return;}
     std::string line=rl_line_buffer;
     int point=rl_point;
@@ -145,6 +150,26 @@ void terminal_message(const std::string &text){
     if(text.back()!='\n')putchar('\n');
     rl_restore_prompt();rl_replace_line(line.c_str(),0);rl_point=point;
     rl_on_new_line();rl_redisplay();fflush(stdout);
+}
+void terminal_activity(const std::string &text){
+    if(!editor||!editor->installed){
+        activity_visible=false;
+        return;
+    }
+    if(!activity_visible){
+        if(text.empty())return;
+        terminal_message(text+"\n");
+        activity_visible=true;
+        last_activity=text;
+        return;
+    }
+    if(text==last_activity)return;
+    last_activity=text;
+    fputs("\0337\033[1A\r\033[2K",stdout);
+    fwrite(text.data(),1,text.size(),stdout);
+    fputs("\0338",stdout);
+    fflush(stdout);
+    if(text.empty())activity_visible=false;
 }
 char *editable_input(const char *prompt,const char *fallback,bool secret,const std::function<void()> &idle,ChatDraft *draft){
     if(input_closed)return nullptr;

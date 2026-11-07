@@ -481,6 +481,18 @@ class ConversationScreen {
     }
 public:
     Conversation *current=nullptr;
+    bool controls_open=false;
+    void select(Conversation *item){
+        terminal_activity("");
+        current=item;
+        last_header.clear();
+        checked=0;
+        if(pinned){
+            content_top=current?1:6;
+            printf("\033[r\033[2J\033[%d;%dr\033[%d;1H",content_top,rows,content_top);
+            fflush(stdout);
+        }
+    }
     ConversationScreen(App &a,Tasks &tasks,std::vector<Conversation> &list):app(a),jobs(tasks),items(list),previous(std::move(tasks.on_idle)){
         struct winsize size{};
         pinned=interface_active&&isatty(1)&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>=10&&size.ws_col>=40;
@@ -502,10 +514,10 @@ public:
         struct winsize size{};
         if(pinned&&!ioctl(1,TIOCGWINSZ,&size)&&size.ws_row>0&&size.ws_col>0&&(rows!=size.ws_row||columns!=size.ws_col)){
             rows=size.ws_row;columns=size.ws_col;
-            content_top=rows>=10&&columns>=40?6:1;
+            content_top=!current&&rows>=10&&columns>=40?6:1;
             printf("\0337\033[%d;%dr\0338",content_top,rows);last_header.clear();
         }
-        const bool live_header=pinned&&rows>=10&&columns>=40;
+        const bool live_header=!current&&pinned&&rows>=10&&columns>=40;
         JsonPtr states(jobs.snapshot());
         struct Activity {const Conversation *item;J *state;size_t number;int priority;};
         std::vector<Activity> activity;
@@ -520,7 +532,7 @@ public:
                 int priority=approval?0:bget(state,"active")?1:!item.queue.empty()?2:3;
                 activity.push_back({&item,state,index+1,priority});
             }
-            if(&item==current&&item.job){
+            if(&item==current&&item.job&&!controls_open){
                 auto output=jobs.output(item.job);
                 if(!output.starts_with(item.displayed))item.displayed.clear();
                 auto end=output.rfind('\n');
@@ -530,8 +542,14 @@ public:
                     terminal_message(output.substr(item.displayed.size(),length-item.displayed.size()));
                     item.displayed=output.substr(0,length);
                 }
+                if(state&&bget(state,"thinking")){
+                    terminal_activity(std::string(tr("正在思考…"))+" "+elapsed_label(json_object_get_double(get(state,"thinking_seconds"))));
+                }else if(state&&!bget(state,"active")){
+                    terminal_activity(std::string(sget(state,"state"))+" · "+title_of(item));
+                }else terminal_activity("");
             }
         }
+        if(current)return;
         // Approval requests remain visible even when several other chats run.
         std::stable_sort(activity.begin(),activity.end(),[](const auto &left,const auto &right){
             if(left.priority!=right.priority)return left.priority<right.priority;
@@ -728,6 +746,9 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
     ,ConversationScreen *screen=nullptr
 #endif
 ){
+#ifndef _WIN32
+    if(screen)screen->select(conversation);
+#endif
     clear_page();
     if(conversation)menu_printf(tr("\n对话：%s\n"),title_of(*conversation));
     show_notice();
@@ -740,7 +761,6 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
     menu_text(tr(conversation?"Ctrl+D 返回选择对话，Ctrl+C 停止当前操作，输入 / 打开操作菜单。":"Ctrl+D 退出，Ctrl+C 停止当前操作，输入 / 打开操作菜单。"));
 #endif
 #ifndef _WIN32
-    if(screen)screen->current=conversation;
 #endif
     const bool guided=terminal_supports_ansi()&&!env_value("DESK_NO_ARROW");
     ChatDraft draft;
@@ -808,14 +828,14 @@ static bool chat(App *a,Tasks &jobs,Conversation *conversation=nullptr
             size_t revision=a->session_revision;
             a->error[0]=0;
 #ifndef _WIN32
-            if(screen)screen->current=nullptr;
+            if(screen)screen->controls_open=true;
 #endif
             int selected=1;
             if(task=="/model")select_model(a,jobs);
             else if(task=="/reasoning")reasoning_menu(a,jobs);
             else selected=chat_menu(a,jobs);
 #ifndef _WIN32
-            if(screen){screen->current=conversation;if(conversation)conversation->displayed.clear();}
+            if(screen){screen->controls_open=false;if(conversation)conversation->displayed.clear();}
 #endif
             if(conversation&&revision!=a->session_revision)conversation->reset_context=true;
             if(selected<0||selected==2)return false;
@@ -927,7 +947,7 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
         #ifndef _WIN32
         item.displayed.clear();
         new_chat=chat(a,jobs,&item,&screen);
-        screen.current=nullptr;
+        screen.select(nullptr);
 #else
         new_chat=chat(a,jobs,&item);
 #endif

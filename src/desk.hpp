@@ -19,7 +19,7 @@
 #include <vector>
 #include <functional>
 #include <optional>
-#define VERSION "1.10.1"
+#define VERSION "1.10.2"
 #define CONTEXT_LIMIT 128000
 #define FILE_LIMIT 65536
 #define RESPONSE_LIMIT 4000000
@@ -93,6 +93,7 @@ std::vector<std::string> approval_choices(bool preview);
 char *input(const char *prompt,const char *fallback,bool secret);
 #ifndef _WIN32
 void terminal_message(const std::string &text);
+void terminal_activity(const std::string &text);
 #endif
 struct ChatDraft {
     std::string text;

@@ -1443,7 +1443,7 @@ static void test_queued_editing(void){
     int master=-1;struct winsize window{24,80,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
     if(!child){setenv("TERM","xterm-256color",1);setenv("INPUTRC","/dev/null",1);execl("./build/desk","desk","--lang","en","--yes","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     CHECK(write(master,"1\n1\nfirst\n",10)==10);std::string output;CHECK(terminal_until(master,output,"Running a command..."));
-    std::string queued="排队😀\x7f下一句\n";type_terminal(master,output,queued);CHECK(terminal_until(master,output,"Queued: 1"));CHECK(terminal_until(master,output,"QUEUED_DONE"));wait_for_chat_prompt(master,output,"QUEUED_DONE");
+    std::string queued="排队😀\x7f下一句\n";type_terminal(master,output,queued);CHECK(terminal_until(master,output,"Queued. This will run after the current operation."));CHECK(terminal_until(master,output,"QUEUED_DONE"));wait_for_chat_prompt(master,output,"QUEUED_DONE");
     JsonPtr request(capture(&a,2));J *messages=get(get(request.get(),"body"),"messages");CHECK(!strcmp(sget(at(messages,alen(messages)-1),"content"),"排队下一句"));
     leave_chat_and_exit(master);int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);app_cleanup(&a);
 }
@@ -1579,9 +1579,10 @@ static void test_background_conversations(){
     CHECK(output.find("\033[?1049h")!=std::string::npos);
     type_terminal(master,output,"1\n1\nFirst conversation\n");
     CHECK(terminal_until(master,output,"Thinking..."));
-    CHECK(terminal_until(master,output,"Running · First conversation"));
+    CHECK(output.find("Running · First conversation")==std::string::npos);
     output.clear();CHECK(write(master,"\x04",1)==1);
     CHECK(terminal_until(master,output,"[2] New conversation"));
+    CHECK(terminal_until(master,output,"Running · First conversation"));
     output.clear();type_terminal(master,output,"0\n");
     CHECK(terminal_until(master,output,"[1] Start chat"));
     CHECK(kill(child,0)==0);
@@ -1589,8 +1590,8 @@ static void test_background_conversations(){
     output.clear();type_terminal(master,output,"1\n");
     CHECK(terminal_until(master,output,"[2] New conversation"));
     output.clear();type_terminal(master,output,"2\nSecond conversation\n");
-    CHECK(terminal_until(master,output,"Running · First conversation"));
-    CHECK(terminal_until(master,output,"Running · Second conversation"));
+    CHECK(terminal_until(master,output,"Thinking..."));
+    CHECK(output.find("Conversation activity")==std::string::npos);
     CHECK(terminal_until(master,output,"SECOND_DONE"));
     CHECK(output.find("FIRST_DONE")==std::string::npos);
     output.clear();CHECK(write(master,"\x04",1)==1);
@@ -1604,7 +1605,7 @@ static void test_background_conversations(){
     output.clear();type_terminal(master,output,"0\n");
     CHECK(terminal_until(master,output,"[1] Start chat"));
     CHECK(output.find("\033[?1049l")==std::string::npos);
-    CHECK(output.find("Conversation activity")==std::string::npos);
+    CHECK(output.substr(output.rfind("[1] Start chat")).find("Conversation activity")==std::string::npos);
     CHECK(write(master,"0\n",2)==2);
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);
     CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);server_done(server);
@@ -1633,7 +1634,8 @@ static void test_picker_approval_status(){
     const auto path=std::string(a.root)+"/reviewed.txt";CHECK(access(path.c_str(),F_OK)!=0);
     // A second conversation changes selector numbers, but approvals stay first.
     output.clear();type_terminal(master,output,"2\n另一任务\n");
-    CHECK(terminal_until(master,output,"执行中 · 另一任务 · 正在思考…"));
+    CHECK(terminal_until(master,output,"正在思考…"));
+    CHECK(output.find("对话运行状态")==std::string::npos);
     output.clear();CHECK(::write(master,"\x04",1)==1);
     CHECK(terminal_until(master,output,"1. 另一任务"));
     CHECK(terminal_until(master,output,"2. 创建文件"));
@@ -1642,7 +1644,8 @@ static void test_picker_approval_status(){
     CHECK(terminal_until(master,output,"[3] 查看完整操作 [0] 取消："));
     CHECK(access(path.c_str(),F_OK)!=0); // Choosing a chat never approves its operation.
     output.clear();type_terminal(master,output,"1\n");
-    CHECK(terminal_until(master,output,"执行中 · 创建文件 · 正在思考…"));
+    CHECK(terminal_until(master,output,"正在思考…"));
+    CHECK(output.find("对话运行状态")==std::string::npos);
     output.clear();CHECK(::write(master,"\x04",1)==1);
     CHECK(terminal_until(master,output,"选择对话"));
     CHECK(terminal_until(master,output,"[1] 已完成 · 创建文件"));
