@@ -95,14 +95,21 @@ for native in (False,True):
                 assert read(),(text,page[-4000:].decode(errors='replace'),state)
         def send(value): page.clear();os.write(fd,value.encode())
         try:
-            until('[5] MCP servers');send('5\n');until('[2] Add remote MCP URL')
+            until('❯ 1. Start chat')
+            if native:
+                send('4\n')
+            else:
+                send('\x1b[B'*3);until('❯ 4. MCP servers')
+                assert b'Select a number:' not in page
+                send('\n')
+            until('[2] Add remote MCP URL')
             if native:
                 send('2\n');until('Server name');send('remote\n');until('MCP URL');send(f'http://127.0.0.1:{server.server_port}/mcp\n');until('Bearer token');send('mcp-test-secret\n')
             else:
                 send('1\n');until('Configuration file path');send(str(config)+'\n')
             until('MCP configuration imported.');until('[1] remote')
             send('1\n1\n');until('Connected. 2 tools available.')
-            send('0\n0\n');until('[1] Start chat')
+            send('0\n0\n');until('❯ 1. Start chat')
             send('1\n1\nUse the MCP echo tool\n');until('MODEL_MCP_DONE')
             send('\x04');until('[0] Main menu');send('0\n0\n')
             deadline=time.monotonic()+8

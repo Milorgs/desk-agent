@@ -968,7 +968,7 @@ static void test_english_menu(void){
     CHECK(terminal_until(master,output,"[3] Add model"));CHECK(output.find("[2] Select model")!=std::string::npos);
     CHECK(write(master,"3\n",2)==2);CHECK(terminal_until(master,output,"[1] OpenAI API"));
     CHECK(terminal_until(master,output,"[2] Anthropic API"));
-    const char *quit="0\n4\n1\n1\n0\n\x04";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
+    const char *quit="0\n5\n1\n1\n0\n\x04";CHECK(write(master,quit,strlen(quit))==static_cast<ssize_t>(strlen(quit)));
     CHECK(terminal_until(master,output,"[1] 开始对话"));
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     app_cleanup(&a);
@@ -1019,9 +1019,9 @@ static void test_numeric_request(void){
 static void test_numeric_settings(void){
     App a=fresh();int master=-1;pid_t child=forkpty(&master,nullptr,nullptr,nullptr);CHECK(child>=0);
     if(!child){execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
-    const char *keys="4\n2\n1\n3\n2\n0\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    const char *keys="5\n2\n1\n3\n2\n0\n0\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
     std::string output;CHECK(terminal_until(master,output,"Approve file edits (this run)"));
-    CHECK(output.find("[6] View status")==std::string::npos);CHECK(output.find("[4] Settings")!=std::string::npos);CHECK(output.find("[4] Tasks")==std::string::npos);
+    CHECK(output.find("[6] View status")==std::string::npos);CHECK(output.find("[5] Settings")!=std::string::npos);CHECK(output.find("[4] Tasks")==std::string::npos);
     int status=0;CHECK(waitpid(child,&status,0)==child);close(master);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     CHECK(output.find("/desktop")==std::string::npos&&output.find("/permissions")==std::string::npos);
     CHECK(output.find("\n  Task:")==std::string::npos&&output.find("\n  Desktop:")==std::string::npos);
@@ -1032,7 +1032,7 @@ static void test_settings_redraw(){
     App a=fresh();int master=-1;struct winsize window{40,110,0,0};pid_t child=forkpty(&master,nullptr,nullptr,&window);CHECK(child>=0);
     if(!child){setenv("TERM","xterm-256color",1);setenv("NO_COLOR","1",1);execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));_exit(127);}
     std::string output;CHECK(terminal_until(master,output,"Select a number:"));
-    const char *keys=" 4 \n2\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
+    const char *keys=" 5 \n2\n1\n";CHECK(write(master,keys,strlen(keys))==static_cast<ssize_t>(strlen(keys)));
     output.clear();CHECK(terminal_until(master,output,"Desktop tools enabled"));
     CHECK(output.rfind("\033[1;1H\033[J")!=std::string::npos);output.erase(0,output.rfind("\033[1;1H\033[J"));
     CHECK(terminal_until(master,output,"Select a number:"));auto screen=output;

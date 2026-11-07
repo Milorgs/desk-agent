@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <poll.h>
 #include <wchar.h>
 #endif
 #include <locale.h>
@@ -317,30 +318,58 @@ static std::string request_text(Tasks &jobs,const char *prompt){
 static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items){
 #ifndef _WIN32
     if(interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)&&!getenv("DESK_NO_ARROW")){
-        struct termios old{},raw{};
-        if(!tcgetattr(STDIN_FILENO,&old)){raw=old;raw.c_lflag&=static_cast<unsigned long>(~(ICANON|ECHO));raw.c_cc[VMIN]=1;raw.c_cc[VTIME]=0;
-            if(!tcsetattr(STDIN_FILENO,TCSANOW,&raw)){
-                size_t selected=0;auto draw=[&]{
+        termios original{};
+        if(!tcgetattr(STDIN_FILENO,&original)){
+            termios mode=original;
+            mode.c_lflag&=~static_cast<tcflag_t>(ICANON|ECHO);
+            mode.c_cc[VMIN]=1;
+            mode.c_cc[VTIME]=0;
+            if(!tcsetattr(STDIN_FILENO,TCSANOW,&mode)){
+                struct RestoreTerminal {
+                    termios mode;
+                    ~RestoreTerminal(){tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
+                } restore{original};
+                size_t selected=0;
+                const bool color=terminal_supports_color();
+                auto draw=[&]{
                     for(size_t i=0;i<items.size();i++){
-                        printf("\033[2K%s%s %zu. %s\n",i==selected?"❯ ":"  ",i==selected?"\033[1;94m":"",i+1,items[i].c_str());
-                        if(i==selected)fputs("\033[0m",stdout);
+                        const bool focused=i==selected;
+                        printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
+                               focused?"❯ ":"  ",(i+1)%items.size(),items[i].c_str(),
+                               focused&&color?"\033[0m":"");
                     }
                     fflush(stdout);
-                };draw();
-                for(;;){unsigned char key=0;if(read(STDIN_FILENO,&key,1)!=1){selected=items.size();break;}
-                    if(key=='\r'||key=='\n')break;
-                    if(key==4){selected=items.size();input_closed=true;break;}
-                    if(key==3){selected=items.size();interrupted=SIGINT;break;}
-                    if(key==27){unsigned char seq[2]{};if(read(STDIN_FILENO,seq,2)==2&&seq[0]=='['){if(seq[1]=='A')selected=selected?selected-1:items.size()-1;else if(seq[1]=='B')selected=(selected+1)%items.size();
-                            printf("\033[%zuA",items.size()+1);draw();}continue;}
-                    if(key>='1'&&key<='9'){size_t n=key-'1';if(n<items.size())selected=n;draw();}
+                };
+                draw();
+                int escape=0;
+                while(!interrupted){
+                    jobs.refresh();
+                    if(jobs.on_idle)jobs.on_idle();
+                    pollfd ready{STDIN_FILENO,POLLIN,0};
+                    const int result=poll(&ready,1,50);
+                    if(result<0){if(errno==EINTR)continue;break;}
+                    if(!result){escape=0;continue;}
+                    unsigned char key=0;
+                    if(read(STDIN_FILENO,&key,1)!=1)break;
+                    if(key=='\r'||key=='\n')return static_cast<int>((selected+1)%items.size());
+                    if(key==4){input_closed=true;break;}
+                    if(key==27){escape=1;continue;}
+                    if(escape==1&&(key=='['||key=='O')){escape=2;continue;}
+                    const size_t previous=selected;
+                    if(escape==2&&key=='A')selected=(selected+items.size()-1)%items.size();
+                    else if(escape==2&&key=='B')selected=(selected+1)%items.size();
+                    else if(!escape&&key=='0')return 0;
+                    else if(!escape&&key>='1'&&static_cast<size_t>(key-'0')<items.size())selected=key-'1';
+                    escape=0;
+                    if(previous!=selected){printf("\033[%zuA",items.size());draw();}
                 }
-                tcsetattr(STDIN_FILENO,TCSANOW,&old);return selected==items.size()?-1:static_cast<int>(selected+1);
+                return -1;
             }
         }
     }
 #endif
-    return number(jobs,static_cast<int>(items.size()));
+    for(size_t i=0;i<items.size();i++)menu_printf("  [%zu] %s\n",(i+1)%items.size(),items[i].c_str());
+    return number(jobs,static_cast<int>(items.size()-1));
 }
 static void language_menu(App *a,Tasks &jobs){
     clear_page();
@@ -926,7 +955,7 @@ static int menu(App *a){
         }
         if(!usage&&(active_listed||!*active_model))menu_text(tr("  无法读取累计 Token 用量。"));
         page_rule();
-        int choice=arrow_menu(jobs,{tr("开始对话"),tr("选择模型"),tr("添加模型"),tr("MCP 服务"),tr("设置")});
+        int choice=arrow_menu(jobs,{tr("开始对话"),tr("选择模型"),tr("添加模型"),tr("MCP 服务"),tr("设置"),tr("退出")});
         if(choice<0){if(interrupted==SIGINT&&!input_closed)continue;return 0;}
         if(!choice)return 0;
         int rc=0;

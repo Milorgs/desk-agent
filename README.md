@@ -74,8 +74,8 @@ API keys stay in the local user configuration directory where I run `desk`. They
 [1] 开始对话 / Start chat
 [2] 选择模型 / Select model
 [3] 添加模型 / Add model
-[4] 设置 / Settings
-[5] MCP 服务 / MCP servers
+[4] MCP 服务 / MCP servers
+[5] 设置 / Settings
 [0] 退出 / Exit
 ```
 
@@ -93,9 +93,9 @@ Type `/` in a chat to open numbered actions. On Linux:
 
 ## 安装包和源码 / Packages and source
 
-最新版本：**1.8.4**。Linux 包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 及系统运行库；Windows 包面向 Windows 10/11 x64。
+最新版本：**1.8.6**。Linux 包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 及系统运行库；Windows 包面向 Windows 10/11 x64。
 
-Latest version: **1.8.4**. The Linux package is built on Ubuntu 22.04 and requires glibc 2.35+ plus system runtime libraries. The Windows package targets Windows 10/11 x64.
+Latest version: **1.8.6**. The Linux package is built on Ubuntu 22.04 and requires glibc 2.35+ plus system runtime libraries. The Windows package targets Windows 10/11 x64.
 
 也可以直接进入对话或执行一次请求：
 
