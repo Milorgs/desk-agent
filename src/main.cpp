@@ -264,8 +264,9 @@ static int number(Tasks &jobs,int maximum){
                     int selected=maximum?1:0;std::string typed;
                     auto draw=[&]{
                         std::string shown=typed.empty()?std::to_string(selected):typed;
-                        printf("\r\033[2K%s❯ %s",roomy_interface()?"    ":"",tr("请选择"));
-                        fputs(shown.c_str(),stdout);fflush(stdout);
+                        printf("\r\033[2K%s❯ ",roomy_interface()?"    ":"");
+                        if(!typed.empty())fputs(shown.c_str(),stdout);
+                        fflush(stdout);
                     };
                     printf("  %s\n",tr("↑/↓ 选择 · Enter 确认 · 直接输入数字"));
                     draw();
