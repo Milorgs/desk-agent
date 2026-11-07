@@ -1385,6 +1385,7 @@ static void test_chat_history_scroll(){
         setenv("TERM","xterm-256color",1);
         setenv("NO_COLOR","1",1);
         setenv("DESK_NO_ARROW","1",1);
+        setenv("INPUTRC","/dev/null",1);
         unsetenv("DESK_NO_COMPOSER");
         execl("./build/desk","desk","--lang","en","--workspace",a.root,static_cast<char *>(nullptr));
         _exit(127);
@@ -1412,6 +1413,12 @@ static void test_chat_history_scroll(){
     leave_chat_and_exit(master);
     int status=0;
     CHECK(waitpid(child,&status,0)==child);
+    if(!WIFEXITED(status)||WEXITSTATUS(status)!=0){
+        fprintf(stderr,"Chat process exited with status %d. Remaining terminal output:\n",status);
+        char bytes[4096];
+        ssize_t count;
+        while((count=read(master,bytes,sizeof bytes))>0)fwrite(bytes,1,static_cast<size_t>(count),stderr);
+    }
     close(master);
     CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     app_cleanup(&a);

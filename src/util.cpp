@@ -223,6 +223,7 @@ int choose_chat_reasoning(int,int){
     if(editor)editor->action="/reasoning";
     return 0;
 }
+int unbound_scroll_key(int,int){return rl_ding();}
 int scroll_up(int,int){transcript_view.scroll(-std::max(1,transcript_view.last-transcript_view.first));return 0;}
 int scroll_down(int,int){transcript_view.scroll(std::max(1,transcript_view.last-transcript_view.first));return 0;}
 int scroll_mouse(int,int){
@@ -280,10 +281,10 @@ struct EditorSession {
             fputs("\033[?1006l\033[?1000l",stdout);
             fflush(stdout);
         }
-        // Restore Readline's terminal bindings. Unbinding a default key can
-        // discard a keymap node that Readline still owns.
+        // Keep Readline's existing bindings. Use its usual bell for formerly
+        // unbound keys so removing a sequence cannot leak a keymap node.
         for(const auto &[sequence,previous]:previous_scroll_bindings)
-            rl_bind_keyseq_in_map(sequence,previous,scroll_keymap);
+            rl_bind_keyseq_in_map(sequence,previous?previous:unbound_scroll_key,scroll_keymap);
         for(const char *sequence:{"\033OQ","\033OR","\033[12~","\033[13~"})rl_bind_keyseq(sequence,rl_insert);
         if(state.installed)rl_callback_handler_remove();
         editor=nullptr;
