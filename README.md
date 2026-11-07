@@ -79,13 +79,13 @@ API keys stay in the local user configuration directory where I run `desk`. They
 [0] 退出 / Exit
 ```
 
-在对话中输入 `/` 打开数字操作菜单。Linux 下：
+用方向键和回车选择菜单，也可输入编号。在对话中输入 `/` 打开操作菜单。Linux 下：
 
 - `Ctrl+D`：返回选择对话，任务继续运行。
 - `Ctrl+C`：停止当前任务。
 - `0`：普通需求内容，不是退出键。
 
-Type `/` in a chat to open numbered actions. On Linux:
+Use the arrow keys and Enter, or type an option number. Type `/` in a chat to open its action menu. On Linux:
 
 - `Ctrl+D`: return to the conversation list while the task continues.
 - `Ctrl+C`: stop the current task.
@@ -93,9 +93,9 @@ Type `/` in a chat to open numbered actions. On Linux:
 
 ## 安装包和源码 / Packages and source
 
-最新版本：**1.8.6**。Linux 包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 及系统运行库；Windows 包面向 Windows 10/11 x64。
+最新版本：**1.8.7**。Linux 包基于 Ubuntu 22.04 构建，需要 glibc 2.35+ 及系统运行库；Windows 包面向 Windows 10/11 x64。
 
-Latest version: **1.8.6**. The Linux package is built on Ubuntu 22.04 and requires glibc 2.35+ plus system runtime libraries. The Windows package targets Windows 10/11 x64.
+Latest version: **1.8.7**. The Linux package is built on Ubuntu 22.04 and requires glibc 2.35+ plus system runtime libraries. The Windows package targets Windows 10/11 x64.
 
 也可以直接进入对话或执行一次请求：
 

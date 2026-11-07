@@ -102,16 +102,20 @@ for native in (False,True):
                 send('\x1b[B'*3);until('❯ 4. MCP servers')
                 assert b'Select a number:' not in page
                 send('\n')
-            until('[2] Add remote MCP URL')
+            until('2. Add remote MCP URL')
             if native:
-                send('2\n');until('Server name');send('remote\n');until('MCP URL');send(f'http://127.0.0.1:{server.server_port}/mcp\n');until('Bearer token');send('mcp-test-secret\n')
+                send('\x1b[B');until('❯ 2. Add remote MCP URL');send('\n');until('Server name');send('remote\n');until('MCP URL');send(f'http://127.0.0.1:{server.server_port}/mcp\n');until('Bearer token');send('mcp-test-secret\n')
             else:
-                send('1\n');until('Configuration file path');send(str(config)+'\n')
-            until('MCP configuration imported.');until('[1] remote')
+                send('\n');until('Configuration file path');send(str(config)+'\n')
+            until('MCP configuration imported.');until('1. remote')
             send('1\n1\n');until('Connected. 2 tools available.')
             send('0\n0\n');until('❯ 1. Start chat')
             send('1\n1\nUse the MCP echo tool\n');until('MODEL_MCP_DONE')
-            send('\x04');until('[0] Main menu');send('0\n0\n')
+            send('/\n');until('❯ 1. New conversation')
+            send('\x1b[B'*5);until('❯ 6. Approval mode')
+            send('\n');until('❯ 1. Ask for approval')
+            send('0\n');until('❯ ')
+            send('\x04');until('0. Main menu');send('0\n0\n')
             deadline=time.monotonic()+8
             while read(): assert time.monotonic()<deadline
             _,status=os.waitpid(pid,0);pid=0;assert os.waitstatus_to_exitcode(status)==0

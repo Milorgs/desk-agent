@@ -11,9 +11,12 @@
 #include <termios.h>
 #include <poll.h>
 #include <wchar.h>
+#else
+#include <windows.h>
 #endif
 #include <locale.h>
 #include <algorithm>
+#include <optional>
 #include <cstdarg>
 #include <cerrno>
 #include <cctype>
@@ -93,21 +96,13 @@ static char *field(const char *name,const char *fallback,bool secret){
     else snprintf(prompt,sizeof prompt,tr("%s [%s]："),name,fallback?fallback:"");
     return input(prompt,fallback,secret);
 }
-static const char *choose_protocol(const char *current){
+static int menu_choices(Tasks &jobs,const char *options,const char *details=nullptr,int initial=-1);
+static const char *choose_protocol(Tasks &jobs,const char *current){
     clear_page();
-    menu_text(tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"));
-    const char *fallback=!strcmp(current,"anthropic")?"2":"1";
-    for(;;){
-        char *choice=field(tr("请选择"),fallback,false);
-        if(!choice)return NULL;
-        const char *out=!strcmp(choice,"1")||!strcmp(choice,"openai")?"openai":!strcmp(choice,"2")||!strcmp(choice,"anthropic")?"anthropic":NULL;
-        bool quit=!strcmp(choice,"0");
-        free(choice);
-        if(out||quit)return out;
-        menu_text(tr("请输入 1、2 或 0。"));
-    }
+    int choice=menu_choices(jobs,tr("\n  [1] OpenAI接口\n  [2] Anthropic接口\n  [0] 返回"),nullptr,!strcmp(current,"anthropic")?2:1);
+    return choice==1?"openai":choice==2?"anthropic":nullptr;
 }
-static int configure(App *a,const char *name,const char *selected,bool fresh){
+static int configure(App *a,Tasks &jobs,const char *name,const char *selected,bool fresh){
     if(!isatty(STDIN_FILENO)){
         seterr(a,tr("配置向导需要交互终端；也可通过 DESK_* 环境变量配置。"));
         return -1;
@@ -123,7 +118,7 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
     JsonPtr candidate_owner(fresh?config_default(name):copy(a->config));
     J *candidate=candidate_owner.get();
     if(!candidate)return -1;
-    const char *protocol=selected?selected:choose_protocol(sget(candidate,"protocol"));
+    const char *protocol=selected?selected:choose_protocol(jobs,sget(candidate,"protocol"));
     if(!protocol){
         return 0;
     }
@@ -167,29 +162,16 @@ static int configure(App *a,const char *name,const char *selected,bool fresh){
     if(config_valid(a,candidate)){
         return -1;
     }
-    menu_text(tr("\n  [1] 测试连接并保存（少量 API 用量）\n  [2] 直接保存，稍后测试\n  [0] 取消"));
-    for(;;){
-        char *choice=field(tr("请选择"),"1",false);
-        if(!choice)return 0;
-        int action=!strcmp(choice,"1")?1:!strcmp(choice,"2")?2:!strcmp(choice,"0")?0:-1;
-        free(choice);
-        if(!action)return 0;
-        if(action<0){
-            menu_text(tr("请输入 1、2 或 0。"));
-            continue;
-        }
-        if(action==1&&api_check(a,candidate)){
-            return -1;
-        }
-        if(action==2)menu_text(tr("配置尚未联网验证。"));
-        break;
-    }
+    int action=menu_choices(jobs,tr("\n  [1] 测试连接并保存（少量 API 用量）\n  [2] 直接保存，稍后测试\n  [0] 取消"),nullptr,1);
+    if(action<=0)return 0;
+    if(action==1&&api_check(a,candidate))return -1;
+    if(action==2)menu_text(tr("配置尚未联网验证。"));
     int rc=save_config(a,candidate);
     if(!rc)set_notice(tr("已保存并选用该模型。"));
     return rc;
 }
-static int add_model(App *a,const char *preset){
-    const char *protocol=choose_protocol("openai");
+static int add_model(App *a,Tasks &jobs,const char *preset){
+    const char *protocol=choose_protocol(jobs,"openai");
     if(!protocol)return 0;
     char fallback[64];
     int number=1;
@@ -199,11 +181,12 @@ static int add_model(App *a,const char *preset){
     while(get(get(a->store,"profiles"),fallback));
     char *name=preset?strdup(preset):field(tr("模型配置名称（输入 0 返回）"),fallback,false);
     if(!name)return 0;
-    int rc=strcmp(name,"0")?configure(a,name,protocol,true):0;
+    int rc=strcmp(name,"0")?configure(a,jobs,name,protocol,true):0;
     free(name);
     return rc;
 }
-static int number(Tasks &jobs,int maximum);
+static int number(Tasks &jobs,int maximum,int initial=-1);
+static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items,int initial=-1);
 static int select_model(App *a,Tasks &jobs){
     clear_page();
     J *profiles=get(a->store,"profiles");
@@ -211,16 +194,17 @@ static int select_model(App *a,Tasks &jobs){
         set_notice(tr("尚未保存模型，请选择 [3] 添加模型。"));
         return 0;
     }
-    std::vector<std::string> order;
+    std::vector<std::string> order,labels;
     menu_text(tr("\n选择模型："));
     json_object_object_foreach(profiles,name,entry){
         order.emplace_back(name);
-        menu_printf("  [%zu] %s (%s)%s\n",order.size(),sget(entry,"model"),sget(entry,"protocol"),same_model(entry,a->config)?tr(" · 当前"):"");
+        labels.push_back(std::string(sget(entry,"model"))+" ("+sget(entry,"protocol")+")"+(same_model(entry,a->config)?tr(" · 当前"):""));
     }
     int count=static_cast<int>(order.size());
-    if(count>1)menu_printf(tr("  [%d] 调整模型编号\n"),count+1);
-    menu_text(tr("  [0] 返回"));
-    int selected=number(jobs,count+(count>1));
+    auto options=labels;
+    if(count>1)options.emplace_back(tr("调整模型编号"));
+    options.emplace_back(tr("返回"));
+    int selected=arrow_menu(jobs,options);
     if(selected<=0)return 0;
     if(selected<=count){
         int result=activate(a,order[static_cast<size_t>(selected-1)].c_str());
@@ -237,74 +221,26 @@ static int select_model(App *a,Tasks &jobs){
     }
 
     menu_text(tr("输入要调整的模型编号（0 返回）。"));
-    int from=number(jobs,count);
+    labels.emplace_back(tr("返回"));
+    int from=arrow_menu(jobs,labels);
     if(from<=0)return 0;
     menu_text(tr("输入该模型的新编号（0 返回）。"));
-    int to=number(jobs,count);
+    int to=arrow_menu(jobs,labels);
     if(to<=0||from==to)return 0;
     auto source=order.begin()+(from-1),target=order.begin()+(to-1);
     if(source<target)std::rotate(source,source+1,target+1);
     else std::rotate(target,source,source+1);
     return reorder_models(a,order);
 }
-static int number(Tasks &jobs,int maximum){
+static int number(Tasks &jobs,int maximum,int initial){
     for(;;){
         if(input_closed||interrupted==SIGTERM)return -1;
         interrupted=0;
-#ifndef _WIN32
-        bool arrow_menu=interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)&&!getenv("DESK_NO_ARROW");
-        if(arrow_menu){
-            JsonPtr states(jobs.snapshot());
-            for(size_t i=0;i<alen(states.get());i++)if(bget(at(states.get(),i),"active")){arrow_menu=false;break;}
-        }
-        if(arrow_menu){
-            struct termios old{},raw{};
-            if(!tcgetattr(STDIN_FILENO,&old)){
-                raw=old;raw.c_lflag&=static_cast<unsigned long>(~(ICANON|ECHO));raw.c_cc[VMIN]=1;raw.c_cc[VTIME]=0;
-                if(!tcsetattr(STDIN_FILENO,TCSANOW,&raw)){
-                    int selected=maximum?1:0;std::string typed;
-                    auto draw=[&]{
-                        std::string shown=typed.empty()?std::to_string(selected):typed;
-                        printf("\r\033[2K%s❯ ",roomy_interface()?"    ":"");
-                        if(!typed.empty())fputs(shown.c_str(),stdout);
-                        fflush(stdout);
-                    };
-                    printf("  %s\n",tr("↑/↓ 选择 · Enter 确认 · 直接输入数字"));
-                    draw();
-                    for(;;){
-                        unsigned char key=0;
-                        if(read(STDIN_FILENO,&key,1)!=1){selected=-1;break;}
-                        if(key=='\r'||key=='\n')break;
-                        if(key==3){interrupted=SIGINT;selected=-1;break;}
-                        if(key==4){input_closed=true;selected=-1;break;}
-                        if(key==127||key==8){if(!typed.empty())typed.pop_back();draw();continue;}
-                        if(key==27){
-                            unsigned char next[2]{};
-                            if(read(STDIN_FILENO,next,2)==2&&next[0]=='['){
-                                if(next[1]=='A')selected=maximum?(selected<=1?maximum:selected-1):0;
-                                else if(next[1]=='B')selected=maximum?(selected>=maximum?1:selected+1):0;
-                                typed.clear();draw();
-                            }
-                            continue;
-                        }
-                        if(key>='0'&&key<='9'){typed.push_back(static_cast<char>(key));draw();}
-                    }
-                    tcsetattr(STDIN_FILENO,TCSANOW,&old);putchar('\n');
-                    if(selected<0)return -1;
-                    if(!typed.empty()){
-                        char *end=nullptr;long value=strtol(typed.c_str(),&end,10);
-                        if(end==typed.c_str()+typed.size()&&value>=0&&value<=maximum)return static_cast<int>(value);
-                        menu_text(tr("请输入列表中的编号。"));continue;
-                    }
-                    return selected;
-                }
-            }
-        }
-#endif
         std::string prompt=std::string(roomy_interface()?"    ":"")+tr("请选择编号：");
         std::unique_ptr<char,decltype(&free)> value(jobs.readline(prompt.c_str()),free);
         if(!value){if(interrupted==SIGINT)continue;return -1;}
         char *start=value.get();while(isspace(static_cast<unsigned char>(*start)))start++;
+        if(!*start&&initial>=0)return initial;
         char *end=nullptr;errno=0;long selected=strtol(start,&end,10);
         bool digits=end!=start;while(isspace(static_cast<unsigned char>(*end)))end++;
         if(digits&&errno!=ERANGE&&!*end&&selected>=0&&selected<=maximum)return static_cast<int>(selected);
@@ -315,78 +251,144 @@ static std::string request_text(Tasks &jobs,const char *prompt){
     std::unique_ptr<char,decltype(&free)> text(jobs.readline(prompt),free);
     return text?text.get():"";
 }
-static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items){
-#ifndef _WIN32
-    if(interface_active&&isatty(STDIN_FILENO)&&isatty(STDOUT_FILENO)&&!getenv("DESK_NO_ARROW")){
-        termios original{};
-        if(!tcgetattr(STDIN_FILENO,&original)){
-            termios mode=original;
-            mode.c_lflag&=~static_cast<tcflag_t>(ICANON|ECHO);
-            mode.c_cc[VMIN]=1;
-            mode.c_cc[VTIME]=0;
-            if(!tcsetattr(STDIN_FILENO,TCSANOW,&mode)){
-                struct RestoreTerminal {
-                    termios mode;
-                    ~RestoreTerminal(){tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
-                } restore{original};
-                size_t selected=0;
-                const bool color=terminal_supports_color();
-                auto draw=[&]{
-                    for(size_t i=0;i<items.size();i++){
-                        const bool focused=i==selected;
-                        printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
-                               focused?"❯ ":"  ",(i+1)%items.size(),items[i].c_str(),
-                               focused&&color?"\033[0m":"");
-                    }
-                    fflush(stdout);
-                };
-                draw();
-                int escape=0;
-                while(!interrupted){
-                    jobs.refresh();
-                    if(jobs.on_idle)jobs.on_idle();
-                    pollfd ready{STDIN_FILENO,POLLIN,0};
-                    const int result=poll(&ready,1,50);
-                    if(result<0){if(errno==EINTR)continue;break;}
-                    if(!result){escape=0;continue;}
-                    unsigned char key=0;
-                    if(read(STDIN_FILENO,&key,1)!=1)break;
-                    if(key=='\r'||key=='\n')return static_cast<int>((selected+1)%items.size());
-                    if(key==4){input_closed=true;break;}
-                    if(key==27){escape=1;continue;}
-                    if(escape==1&&(key=='['||key=='O')){escape=2;continue;}
-                    const size_t previous=selected;
-                    if(escape==2&&key=='A')selected=(selected+items.size()-1)%items.size();
-                    else if(escape==2&&key=='B')selected=(selected+1)%items.size();
-                    else if(!escape&&key=='0')return 0;
-                    else if(!escape&&key>='1'&&static_cast<size_t>(key-'0')<items.size())selected=key-'1';
-                    escape=0;
-                    if(previous!=selected){printf("\033[%zuA",items.size());draw();}
-                }
-                return -1;
-            }
-        }
-    }
+static std::optional<int> arrow_choice(Tasks &jobs,const std::vector<std::string> &items,int initial=1){
+    if(input_closed||interrupted==SIGTERM)return -1;
+    if(!isatty(STDIN_FILENO)||!terminal_supports_ansi()||env_value("DESK_NO_ARROW"))return std::nullopt;
+    interrupted=0;
+    enum {idle=-1,end_input=-2,ignored=-3,up=256,down=257};
+#ifdef _WIN32
+    HANDLE console=GetStdHandle(STD_INPUT_HANDLE);
+    DWORD original=0;
+    if(!GetConsoleMode(console,&original))return std::nullopt;
+    auto read_key=[&]() -> int {
+        auto ready=WaitForSingleObject(console,50);
+        if(ready==WAIT_TIMEOUT)return idle;
+        if(ready!=WAIT_OBJECT_0)return end_input;
+        INPUT_RECORD event{};
+        DWORD count=0;
+        if(!ReadConsoleInputW(console,&event,1,&count)||!count)return end_input;
+        if(event.EventType!=KEY_EVENT||!event.Event.KeyEvent.bKeyDown)return ignored;
+        const auto &key=event.Event.KeyEvent;
+        if(key.wVirtualKeyCode==VK_UP)return up;
+        if(key.wVirtualKeyCode==VK_DOWN)return down;
+        if(key.wVirtualKeyCode=='D'&&(key.dwControlKeyState&(LEFT_CTRL_PRESSED|RIGHT_CTRL_PRESSED)))return 4;
+        return key.uChar.UnicodeChar;
+    };
+#else
+    termios original{};
+    if(tcgetattr(STDIN_FILENO,&original))return std::nullopt;
+    termios mode=original;
+    mode.c_lflag&=~static_cast<tcflag_t>(ICANON|ECHO);
+    mode.c_cc[VMIN]=1;
+    mode.c_cc[VTIME]=0;
+    if(tcsetattr(STDIN_FILENO,TCSANOW,&mode))return std::nullopt;
+    struct RestoreTerminal {
+        termios mode;
+        ~RestoreTerminal(){tcsetattr(STDIN_FILENO,TCSANOW,&mode);}
+    } restore{original};
+    auto read_key=[]() -> int {
+        pollfd ready{STDIN_FILENO,POLLIN,0};
+        int result=poll(&ready,1,50);
+        if(result<0)return errno==EINTR?ignored:end_input;
+        if(!result)return idle;
+        unsigned char key=0;
+        return read(STDIN_FILENO,&key,1)==1?static_cast<int>(key):end_input;
+    };
 #endif
+    size_t selected=initial?static_cast<size_t>(initial-1):items.size()-1;
+    const int rows=terminal_rows();
+    const size_t visible=std::min(items.size(),static_cast<size_t>(rows>content_top?rows-content_top:8));
+    size_t first=0;
+    std::string typed;
+    const bool color=terminal_supports_color();
+    auto draw=[&]{
+        if(selected<first)first=selected;
+        if(selected>=first+visible)first=selected-visible+1;
+        fputs("\033[?7l",stdout);
+        for(size_t i=first;i<first+visible;i++){
+            const bool focused=i==selected;
+            printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
+                   focused?"❯ ":"  ",(i+1)%items.size(),items[i].c_str(),
+                   focused&&color?"\033[0m":"");
+        }
+        fputs("\033[?7h",stdout);
+        fflush(stdout);
+    };
+    draw();
+    int escape=0;
+    while(!interrupted){
+        jobs.refresh();
+        if(jobs.on_idle)jobs.on_idle();
+        int key=read_key();
+        if(key==end_input)break;
+        if(key==idle){escape=0;continue;}
+        if(key==ignored)continue;
+        if(key=='\r'||key=='\n'){
+            if(typed.empty())return static_cast<int>((selected+1)%items.size());
+            auto value=strtoul(typed.c_str(),nullptr,10);
+            if(value<items.size())return static_cast<int>(value);
+            typed.clear();
+            continue;
+        }
+        if(key==4){input_closed=true;break;}
+        if(key==27){escape=1;continue;}
+        if(escape==1&&(key=='['||key=='O')){escape=2;continue;}
+        const size_t previous=selected;
+        if(key==up||key==down||(escape==2&&(key=='A'||key=='B'))){
+            selected=(selected+((key==up||key=='A')?items.size()-1:1))%items.size();
+            typed.clear();
+        }else if(!escape&&(key==127||key==8)){
+            if(!typed.empty())typed.pop_back();
+        }else if(!escape&&key>='0'&&key<='9'){
+            if(typed.size()<20)typed.push_back(static_cast<char>(key));
+        }
+        if(!typed.empty()){
+            auto value=strtoul(typed.c_str(),nullptr,10);
+            if(value<items.size())selected=value?value-1:items.size()-1;
+        }
+        escape=0;
+        if(previous!=selected){printf("\033[%zuA",visible);draw();}
+    }
+    return -1;
+}
+static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items,int initial){
+    if(auto choice=arrow_choice(jobs,items,initial<0?1:initial))return *choice;
     for(size_t i=0;i<items.size();i++)menu_printf("  [%zu] %s\n",(i+1)%items.size(),items[i].c_str());
-    return number(jobs,static_cast<int>(items.size()-1));
+    return number(jobs,static_cast<int>(items.size()-1),initial);
+}
+// Static menus keep their existing localized labels and numbered fallback.
+static int menu_choices(Tasks &jobs,const char *options,const char *details,int initial){
+    std::vector<std::string> items;
+    std::string heading;
+    for(std::string_view lines(options);!lines.empty();){
+        auto end=lines.find('\n');
+        auto line=lines.substr(0,end);
+        auto label=line.find("] ");
+        if(line.starts_with("  [")&&label!=line.npos)items.emplace_back(line.substr(label+2));
+        else {heading.append(line);heading+='\n';}
+        if(end==lines.npos)break;
+        lines.remove_prefix(end+1);
+    }
+    if(!heading.empty())menu_text(heading.c_str());
+    if(details)menu_text(details);
+    return arrow_menu(jobs,items,initial);
 }
 static void language_menu(App *a,Tasks &jobs){
     clear_page();
-    menu_text(tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
-    int choice=number(jobs,2);
+    int choice=menu_choices(jobs,tr("\n界面语言\n  [1] 简体中文\n  [2] English\n  [0] 返回"));
     if(choice==1&&save_language(*a,"zh"))set_notice(tr("语言已切换为简体中文。"));
     else if(choice==2&&save_language(*a,"en"))set_notice(tr("语言已切换为 English。"));
 }
 static void model_id_menu(App *a,Tasks &jobs){
     clear_page();
-    menu_text(tr("\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回"));
-    int choice=number(jobs,2);std::string model;
+    int choice=menu_choices(jobs,tr("\n切换模型 ID\n  [1] 从在线列表选择\n  [2] 手动输入\n  [0] 返回"));std::string model;
     if(choice==1){
         JsonPtr models(api_models(a,a->config));
         if(!models){fprintf(stderr,"%s\n",a->error);return;}
-        for(size_t i=0;i<alen(models.get());i++)menu_printf("  [%zu] %s\n",i+1,json_object_get_string(at(models.get(),i)));
-        menu_text(tr("  [0] 返回"));int index=number(jobs,static_cast<int>(alen(models.get())));
+        std::vector<std::string> options;
+        for(size_t i=0;i<alen(models.get());i++)options.emplace_back(json_object_get_string(at(models.get(),i)));
+        options.emplace_back(tr("返回"));
+        int index=arrow_menu(jobs,options);
         if(index<=0)return;
         model=json_object_get_string(at(models.get(),static_cast<size_t>(index-1)));
     }else if(choice==2)model=request_text(jobs,tr("模型 ID（回车返回）："));
@@ -397,9 +399,9 @@ static void model_id_menu(App *a,Tasks &jobs){
 }
 static void approval_menu(App *a,Tasks &jobs){
     clear_page();
-    menu_text(tr("\n批准模式\n  [1] 请求批准\n  [2] 帮我批准\n  [3] 完全访问权限\n  [0] 返回"));
-    menu_text(tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。"));
-    int selected=number(jobs,3);if(selected<=0)return;
+    const char *options=tr("\n批准模式\n  [1] 请求批准\n  [2] 帮我批准\n  [3] 完全访问权限\n  [0] 返回");
+    const char *details=tr("请求批准：修改、命令和桌面操作前确认。帮我批准：自动批准工作目录内文件编辑，命令和桌面操作仍确认。完全访问权限：自动批准已启用工具，文件工具仍限工作目录，命令以当前用户权限运行。");
+    int selected=menu_choices(jobs,options,details);if(selected<=0)return;
     a->yes=selected==3;a->auto_edit=selected==2;
     char message[256];snprintf(message,sizeof message,tr("批准模式：%s（本次运行）\n"),permission_name(*a));set_notice(message);
 }
@@ -410,10 +412,12 @@ static void reasoning_menu(App *a,Tasks &jobs){
     const char *anthropic[]={"none","low","medium","high","xhigh","max"};
     const char **levels=native?anthropic:openai;
     menu_text(tr("\n推理模式"));
-    for(int i=0;i<6;i++)menu_printf("  [%d] %s (%s)\n",i+1,reasoning_name(levels[i]),levels[i]);
-    menu_text(tr("  [7] 恢复服务商默认（不传推理参数）\n  [0] 返回"));
+    std::vector<std::string> options;
+    for(int i=0;i<6;i++)options.push_back(std::string(reasoning_name(levels[i]))+" ("+levels[i]+")");
+    options.emplace_back(tr("恢复服务商默认（不传推理参数）"));
+    options.emplace_back(tr("返回"));
     menu_text(tr("仅发送接口原生参数；支持档位由模型决定，不自动更换模型、提高输出上限或降档。"));
-    int choice=number(jobs,7);if(choice<=0)return;
+    int choice=arrow_menu(jobs,options);if(choice<=0)return;
     JsonPtr candidate(copy(a->config));
     if(choice==7)json_object_object_del(candidate.get(),"reasoning_effort");
     else put(candidate.get(),"reasoning_effort",str(levels[choice-1]));
@@ -423,20 +427,19 @@ static void reasoning_menu(App *a,Tasks &jobs){
 static void settings_menu(App *a,Tasks &jobs){
     for(;;){
         clear_page();show_notice();
-        menu_text(tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));
-        int choice=number(jobs,7);if(choice<=0)return;
+        int choice=menu_choices(jobs,tr("\n设置\n  [1] 界面语言\n  [2] 桌面工具\n  [3] 批准模式\n  [4] 编辑当前模型配置\n  [5] 切换模型 ID\n  [6] 连接测试（少量 API 用量）\n  [7] 推理模式\n  [0] 返回"));if(choice<=0)return;
         a->error[0]=0;
         if(choice==1)language_menu(a,jobs);
         else if(choice==2){
             clear_page();
-            menu_text(tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));int selected=number(jobs,2);
+            int selected=menu_choices(jobs,tr("\n桌面工具\n  [1] 开启\n  [2] 关闭\n  [0] 返回"));
             if(selected==1){a->desktop=true;set_notice(tr("桌面工具已开启，目标应用文字会发送至 API。"));}
             else if(selected==2){a->desktop=false;desktop_clear(a);set_notice(tr("桌面工具已关闭。"));}
         }else if(choice==3){
             approval_menu(a,jobs);
         }else if(choice==4){
             std::string name=sget(a->config,"profile");
-            if(configure(a,name.c_str(),nullptr,false))fprintf(stderr,"%s\n",a->error);
+            if(configure(a,jobs,name.c_str(),nullptr,false))fprintf(stderr,"%s\n",a->error);
         }else if(choice==5)model_id_menu(a,jobs);
         else if(choice==6){
             menu_text(tr("发送最小工具调用测试（少量 API 用量），不发送当前会话。"));
@@ -668,14 +671,16 @@ static void mcp_menu(App *a,Tasks &jobs){
         if(!notice.empty()){puts(notice.c_str());notice.clear();}
         JsonPtr servers(mcp_load(*a));
         if(!servers){fprintf(stderr,"%s\n",a->error);return;}
-        std::vector<std::string> names;
+        std::vector<std::string> names,options;
         json_object_object_foreach(servers.get(),name,entry){
             names.emplace_back(name);
-            menu_printf("  [%zu] %s · %s · %s\n",names.size(),name,*sget(entry,"url")?"HTTP":"stdio",tr(bget(entry,"disabled")?"已停用":"已启用"));
+            options.push_back(std::string(name)+" · "+(*sget(entry,"url")?"HTTP":"stdio")+" · "+tr(bget(entry,"disabled")?"已停用":"已启用"));
         }
         int count=static_cast<int>(names.size());
-        menu_printf(tr("\n  [%d] 导入 JSON 配置文件\n  [%d] 添加远程 MCP 地址\n  [0] 返回\n"),count+1,count+2);
-        int choice=number(jobs,count+2);if(choice<=0)return;
+        options.emplace_back(tr("导入 JSON 配置文件"));
+        options.emplace_back(tr("添加远程 MCP 地址"));
+        options.emplace_back(tr("返回"));
+        int choice=arrow_menu(jobs,options);if(choice<=0)return;
         a->error[0]=0;
         if(choice==count+1){
             std::string path=request_text(jobs,tr("配置文件路径（空行取消）："));if(path.empty())continue;
@@ -695,21 +700,19 @@ static void mcp_menu(App *a,Tasks &jobs){
         }else{
             const std::string name=names[static_cast<size_t>(choice-1)];J *entry=get(servers.get(),name.c_str());
             clear_page();printf("\n  MCP · %s\n",name.c_str());
-            menu_text(tr("  [1] 测试连接并列出工具\n  [2] 切换启用/停用\n  [3] 删除服务\n  [0] 返回"));
-            menu_text(tr("连接测试会启动配置中的本地程序，或连接远程服务。"));
-            int action=number(jobs,3);
+            int action=menu_choices(jobs,tr("  [1] 测试连接并列出工具\n  [2] 切换启用/停用\n  [3] 删除服务\n  [0] 返回"),
+                                    tr("连接测试会启动配置中的本地程序，或连接远程服务。"));
             if(action==1){
                 if(mcp_prepare(*a,true,name.c_str())){
                     JsonPtr tools(mcp_tools(*a));printf(tr("连接成功，共 %zu 个工具。\n"),alen(tools.get()));
                     for(size_t i=0;i<alen(tools.get());i++)printf("  %.*s\n",180,sget(get(at(tools.get(),i),"function"),"description"));
                 }else fprintf(stderr,"%s\n",a->error);
-                mcp_close(*a);menu_text(tr("  [0] 返回"));number(jobs,0);
+                mcp_close(*a);arrow_menu(jobs,{tr("返回")});
             }else if(action==2){
                 put(entry,"disabled",json_object_new_boolean(!bget(entry,"disabled")));
                 notice=mcp_save(*a,servers.get())?tr("MCP 设置已保存，下一条需求生效。"):a->error;
             }else if(action==3){
-                menu_text(tr("删除此 MCP 配置？\n  [1] 确认删除\n  [0] 取消"));
-                if(number(jobs,1)==1){json_object_object_del(servers.get(),name.c_str());notice=mcp_save(*a,servers.get())?tr("MCP 配置已删除。"):a->error;}
+                if(menu_choices(jobs,tr("删除此 MCP 配置？\n  [1] 确认删除\n  [0] 取消"),nullptr,0)==1){json_object_object_del(servers.get(),name.c_str());notice=mcp_save(*a,servers.get())?tr("MCP 配置已删除。"):a->error;}
             }
         }
         if(interrupted==SIGTERM||input_closed)return;
@@ -717,16 +720,14 @@ static void mcp_menu(App *a,Tasks &jobs){
 }
 static int chat_menu(App *a,Tasks &jobs){
     clear_page();
-    menu_text(tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"));
-    int choice=number(jobs,8);if(choice<=0)return 0;
+    int choice=menu_choices(jobs,tr("\n对话操作\n  [1] 新建对话\n  [2] 选择模型\n  [3] 设置\n  [4] 查看状态\n  [5] 推理模式\n  [6] 批准模式\n  [7] 返回选择对话\n  [8] MCP 服务\n  [0] 返回输入"));if(choice<=0)return 0;
     if(choice==1)return 3;
     else if(choice==2){if(select_model(a,jobs))fprintf(stderr,"%s\n",a->error);}
     else if(choice==3)settings_menu(a,jobs);
     else if(choice==4){
         clear_page();
         status(a);
-        menu_text(tr("  [0] 返回"));
-        number(jobs,0);
+        arrow_menu(jobs,{tr("返回")});
     }
     else if(choice==5)reasoning_menu(a,jobs);
     else if(choice==6)approval_menu(a,jobs);
@@ -847,13 +848,23 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             clear_page();
             menu_text(tr("\n选择对话（仅本次运行保留）"));
             if(items.empty())menu_text(tr("还没有对话。"));
-            for(size_t i=0;i<items.size();i++){
-                printf("  %zu. %s",i+1,title_of(items[i]));
-                if(!items[i].queue.empty())printf(tr(" · 排队：%zu"),items[i].queue.size());
-                putchar('\n');
+            std::vector<std::string> options;
+            for(auto &item:items){
+                options.emplace_back(title_of(item));
+                if(!item.queue.empty()){
+                    char queued[80];
+                    snprintf(queued,sizeof queued,tr(" · 排队：%zu"),item.queue.size());
+                    options.back()+=queued;
+                }
             }
-            menu_printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [0] 返回主菜单\n"),create,rename,remove);
-            choice=number(jobs,remove);
+            for(auto label:{"新建对话","重命名对话","删除对话","返回主菜单"})options.emplace_back(tr(label));
+            if(auto selected=arrow_choice(jobs,options)){
+                choice=*selected;
+            }else{
+                for(size_t i=0;i<items.size();i++)printf("  %zu. %s\n",i+1,options[i].c_str());
+                menu_printf(tr("\n  [%d] 新建对话\n  [%d] 重命名对话\n  [%d] 删除对话\n  [0] 返回主菜单\n"),create,rename,remove);
+                choice=number(jobs,remove);
+            }
             if(choice<=0)return;
         }
         new_chat=false;
@@ -864,12 +875,15 @@ static void conversation_menu(App *a,Tasks &jobs,std::vector<Conversation> &item
             }
             bool deleting=choice==remove;
             menu_text(tr(deleting?"输入上方要删除的对话编号（0 返回）。":"输入上方要重命名的对话编号（0 返回）。"));
-            int which=number(jobs,count);
+            std::vector<std::string> options;
+            for(auto &item:items)options.emplace_back(title_of(item));
+            options.emplace_back(tr("返回"));
+            int which=arrow_menu(jobs,options);
             if(which<=0)continue;
             auto item=items.begin()+(which-1);
             if(deleting){
-                menu_printf(tr("删除「%s」？\n  [1] 确认删除\n  [0] 取消\n"),title_of(*item));
-                if(number(jobs,1)==1){
+                menu_printf(tr("删除「%s」？"),title_of(*item));
+                if(arrow_menu(jobs,{tr("确认删除"),tr("取消")},0)==1){
                     if(item->job)jobs.remove(item->job);
                     items.erase(item);
                 }
@@ -961,7 +975,7 @@ static int menu(App *a){
         int rc=0;
         if(choice==1)conversation_menu(a,jobs,conversations);
         else if(choice==2)rc=select_model(a,jobs);
-        else if(choice==3)rc=add_model(a,nullptr);
+        else if(choice==3)rc=add_model(a,jobs,nullptr);
         else if(choice==4)mcp_menu(a,jobs);
         else if(choice==5)settings_menu(a,jobs);
         if(rc)notice=a->error;
@@ -1074,7 +1088,8 @@ static int run_cli(int argc,char **argv){
         goto cleanup;
     }
     if(task&&!strcmp(task,"config")){
-        rc=configure(&a,sget(a.config,"profile"),NULL,false)?1:0;
+        Tasks jobs;
+        rc=configure(&a,jobs,sget(a.config,"profile"),NULL,false)?1:0;
         if(rc)fprintf(stderr,"%s\n",a.error);
         goto cleanup;
     }
