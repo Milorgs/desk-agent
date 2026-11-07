@@ -244,7 +244,9 @@ int scroll_mouse(int,int){
 }
 struct EditorSession {
     EditorState state;
-    bool scrolling=false;
+    Keymap scroll_keymap=nullptr;
+    std::vector<std::pair<const char *,rl_command_func_t *>> previous_scroll_bindings;
+    bool mouse_reporting=false;
     explicit EditorSession(const char *prompt){
         editor=&state;
         rl_readline_name="desk";
@@ -256,19 +258,32 @@ struct EditorSession {
     }
     void enable_scrolling(){
         if(!transcript_view.last)return;
-        scrolling=true;
-        rl_bind_keyseq("\033[5~",scroll_up);
-        rl_bind_keyseq("\033[6~",scroll_down);
-        rl_bind_keyseq("\033[<",scroll_mouse);
-        fputs("\033[?1000h\033[?1006h",stdout);
-        fflush(stdout);
+        scroll_keymap=rl_get_keymap();
+        auto bind=[&](const char *sequence,rl_command_func_t *handler){
+            int type=ISFUNC;
+            auto previous=rl_function_of_keyseq(sequence,scroll_keymap,&type);
+            if(type!=ISFUNC)return false;
+            if(rl_bind_keyseq_in_map(sequence,handler,scroll_keymap))return false;
+            previous_scroll_bindings.emplace_back(sequence,previous);
+            return true;
+        };
+        bind("\033[5~",scroll_up);
+        bind("\033[6~",scroll_down);
+        mouse_reporting=bind("\033[<",scroll_mouse);
+        if(mouse_reporting){
+            fputs("\033[?1000h\033[?1006h",stdout);
+            fflush(stdout);
+        }
     }
     ~EditorSession(){
-        if(scrolling){
+        if(mouse_reporting){
             fputs("\033[?1006l\033[?1000l",stdout);
             fflush(stdout);
-            for(const char *sequence:{"\033[5~","\033[6~","\033[<"})rl_bind_keyseq(sequence,nullptr);
         }
+        // Restore Readline's terminal bindings. Unbinding a default key can
+        // discard a keymap node that Readline still owns.
+        for(const auto &[sequence,previous]:previous_scroll_bindings)
+            rl_bind_keyseq_in_map(sequence,previous,scroll_keymap);
         for(const char *sequence:{"\033OQ","\033OR","\033[12~","\033[13~"})rl_bind_keyseq(sequence,rl_insert);
         if(state.installed)rl_callback_handler_remove();
         editor=nullptr;
