@@ -135,10 +135,11 @@ const char *env_value(const char *name){return std::getenv(name);}
 #endif
 
 std::optional<int> terminal_choice(const std::vector<std::string> &items,int initial,int top,const std::function<void()> &on_idle,bool transient){
+    if(items.empty())return 0;
     if(input_closed||interrupted==SIGTERM)return -1;
     if(!isatty(STDIN_FILENO)||!terminal_supports_ansi()||env_value("DESK_NO_ARROW"))return std::nullopt;
     interrupted=0;
-    enum {idle=-1,end_input=-2,ignored=-3,up=256,down=257};
+    enum {idle=-1,end_input=-2,ignored=-3,up=256,down=257,home=258,end=259,page_up=260,page_down=261};
 #ifdef _WIN32
     HANDLE console=GetStdHandle(STD_INPUT_HANDLE);
     DWORD original=0;
@@ -154,6 +155,10 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
         const auto &key=event.Event.KeyEvent;
         if(key.wVirtualKeyCode==VK_UP)return up;
         if(key.wVirtualKeyCode==VK_DOWN)return down;
+        if(key.wVirtualKeyCode==VK_HOME)return home;
+        if(key.wVirtualKeyCode==VK_END)return end;
+        if(key.wVirtualKeyCode==VK_PRIOR)return page_up;
+        if(key.wVirtualKeyCode==VK_NEXT)return page_down;
         if(key.wVirtualKeyCode=='D'&&(key.dwControlKeyState&(LEFT_CTRL_PRESSED|RIGHT_CTRL_PRESSED)))return 4;
         return key.uChar.UnicodeChar;
     };
@@ -178,9 +183,14 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
         return read(STDIN_FILENO,&key,1)==1?static_cast<int>(key):end_input;
     };
 #endif
-    size_t selected=initial?static_cast<size_t>(initial-1):items.size()-1;
-    const int rows=terminal_rows();
-    const size_t visible=std::min(items.size(),static_cast<size_t>(rows>top?rows-top:8));
+    size_t selected=initial>0&&static_cast<size_t>(initial)<=items.size()?static_cast<size_t>(initial-1):items.size()-1;
+    int rows=terminal_rows(),columns=terminal_columns();
+    auto capacity=[&](int height){return std::min(items.size(),static_cast<size_t>(std::max(1,height-top)));};
+    size_t visible=capacity(rows);
+    std::vector<std::string> labels=items;
+    for(auto &label:labels)for(char &byte:label){
+        if(static_cast<unsigned char>(byte)<32||byte==127)byte=' ';
+    }
     size_t first=0;
     std::string typed;
     const bool color=terminal_supports_color();
@@ -191,7 +201,7 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
         for(size_t i=first;i<first+visible;i++){
             const bool focused=i==selected;
             printf("\r\033[2K%s%s%zu. %s%s\n",focused&&color?"\033[1;94m":"",
-                   focused?"❯ ":"  ",(i+1)%items.size(),items[i].c_str(),
+                   focused?"❯ ":"  ",(i+1)%items.size(),labels[i].c_str(),
                    focused&&color?"\033[0m":"");
         }
         fputs("\033[?7h",stdout);
@@ -202,12 +212,27 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
         if(transient){printf("\033[%zuA\r\033[J",visible);fflush(stdout);}
         return std::optional<int>{choice};
     };
-    int escape=0;
+    std::string escape;
+    double escape_started=0;
     while(!interrupted){
         if(on_idle)on_idle();
+        int height=terminal_rows(),width=terminal_columns();
+        if(height!=rows||width!=columns){
+            size_t rewind=std::min(visible,capacity(height));
+            printf("\033[%zuA\r\033[J",rewind);
+            rows=height;columns=width;visible=capacity(rows);
+            first=std::min(first,items.size()-visible);
+            draw();
+        }
         int key=read_key();
         if(key==end_input)break;
-        if(key==idle){if(escape==1&&transient)return finish(0);escape=0;continue;}
+        if(key==idle){
+            if(!escape.empty()&&monotime()-escape_started>=0.2){
+                if(escape=="\x1b"&&transient)return finish(0);
+                escape.clear();
+            }
+            continue;
+        }
         if(key==ignored)continue;
         if(key=='\r'||key=='\n'){
             if(typed.empty())return finish(static_cast<int>((selected+1)%items.size()));
@@ -217,22 +242,39 @@ std::optional<int> terminal_choice(const std::vector<std::string> &items,int ini
             continue;
         }
         if(key==4){input_closed=true;break;}
-        if(key==27){escape=1;continue;}
-        if(escape==1&&(key=='['||key=='O')){escape=2;continue;}
+        if(key==27){escape="\x1b";escape_started=monotime();continue;}
+        if(!escape.empty()){
+            escape+=static_cast<char>(key);
+            if(escape.size()==2&&(key=='['||key=='O'))continue;
+            if(escape.size()>2&&((key>='0'&&key<='9')||key==';')&&escape.size()<16)continue;
+            if(escape=="\x1b[A"||escape=="\x1bOA")key=up;
+            else if(escape=="\x1b[B"||escape=="\x1bOB")key=down;
+            else if(escape=="\x1b[H"||escape=="\x1bOH"||escape=="\x1b[1~")key=home;
+            else if(escape=="\x1b[F"||escape=="\x1bOF"||escape=="\x1b[4~")key=end;
+            else if(escape=="\x1b[5~")key=page_up;
+            else if(escape=="\x1b[6~")key=page_down;
+            else key=ignored;
+            escape.clear();
+        }
         const size_t previous=selected;
-        if(key==up||key==down||(escape==2&&(key=='A'||key=='B'))){
-            selected=(selected+((key==up||key=='A')?items.size()-1:1))%items.size();
+        if(key==up||key==down){
+            selected=(selected+(key==up?items.size()-1:1))%items.size();
             typed.clear();
-        }else if(!escape&&(key==127||key==8)){
+        }else if(key==home||key==end){
+            selected=key==home?0:items.size()-1;
+            typed.clear();
+        }else if(key==page_up||key==page_down){
+            selected=key==page_up?(selected>visible?selected-visible:0):std::min(selected+visible,items.size()-1);
+            typed.clear();
+        }else if(key==127||key==8){
             if(!typed.empty())typed.pop_back();
-        }else if(!escape&&key>='0'&&key<='9'){
+        }else if(key>='0'&&key<='9'){
             if(typed.size()<20)typed.push_back(static_cast<char>(key));
         }
         if(!typed.empty()){
             auto value=strtoul(typed.c_str(),nullptr,10);
             if(value<items.size())selected=value?value-1:items.size()-1;
         }
-        escape=0;
         if(previous!=selected){printf("\033[%zuA",visible);draw();}
     }
     return finish(-1);

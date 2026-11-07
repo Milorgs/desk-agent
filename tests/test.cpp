@@ -1216,6 +1216,54 @@ static void type_terminal(int fd,std::string &output,const std::string &text){
     }
     CHECK(used==text.size());
 }
+static void test_menu_navigation_and_resize(){
+    int master=-1;
+    winsize window{12,80,0,0};
+    pid_t child=forkpty(&master,nullptr,nullptr,&window);
+    CHECK(child>=0);
+    if(!child){
+        unsetenv("DESK_NO_ARROW");
+        setenv("TERM","xterm-256color",1);
+        setenv("NO_COLOR","1",1);
+        termios before{},after{};
+        if(tcgetattr(0,&before))_exit(2);
+        std::vector<std::string> items;
+        for(int i=1;i<=24;i++)items.push_back("Item "+std::to_string(i));
+        items.back()+="\nunsafe\x1b[31m";
+        items.emplace_back("Back");
+        auto choice=terminal_choice(items,1,1);
+        if(tcgetattr(0,&after))_exit(3);
+        printf("RESULT=%d RESTORED=%d\n",choice.value_or(-2),before.c_lflag==after.c_lflag);
+        fflush(stdout);
+        _exit(0);
+    }
+    std::string output;
+    CHECK(terminal_until(master,output,"❯ 1. Item 1"));
+    output.clear();
+    CHECK(write(master,"\x1b",1)==1);
+    usleep(80000);
+    CHECK(write(master,"[B",2)==2);
+    CHECK(terminal_until(master,output,"❯ 2. Item 2"));
+    window.ws_row=6;window.ws_col=35;
+    output.clear();
+    CHECK(!ioctl(master,TIOCSWINSZ,&window));
+    CHECK(terminal_until(master,output,"❯ 2. Item 2"));
+    CHECK(output.find("\033[5A")!=std::string::npos);
+    output.clear();type_terminal(master,output,"\x1b[6~");
+    CHECK(terminal_until(master,output,"❯ 7. Item 7"));
+    output.clear();type_terminal(master,output,"\x1b[H");
+    CHECK(terminal_until(master,output,"❯ 1. Item 1"));
+    output.clear();type_terminal(master,output,"\x1b[F");
+    CHECK(terminal_until(master,output,"❯ 0. Back"));
+    CHECK(output.find("Item 24 unsafe [31m")!=std::string::npos);
+    CHECK(output.find("unsafe\x1b[31m")==std::string::npos);
+    output.clear();type_terminal(master,output,"12\n");
+    CHECK(terminal_until(master,output,"RESULT=12 RESTORED=1"));
+    int status=0;
+    CHECK(waitpid(child,&status,0)==child);
+    close(master);
+    CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
+}
 static void test_guided_approval(){
     App a=fresh();
     json_object_put(a.config);
@@ -1665,6 +1713,7 @@ int main(int argc,char **argv){
     test_compact_output();
     test_exit_during_work();
     test_compact_approval();
+    test_menu_navigation_and_resize();
     test_guided_approval();
     test_line_editing();
     test_queued_editing();

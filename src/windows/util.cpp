@@ -97,10 +97,50 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
     size_t point=text.size();
     wchar_t pending_surrogate=0;
     if(draft){draft->paused=false;}
+    auto previous=[&](size_t offset){
+        if(offset)offset--;
+        if(offset&&text[offset]>=0xdc00&&text[offset]<=0xdfff)offset--;
+        return offset;
+    };
+    auto next=[&](size_t offset){
+        if(offset<text.size()){
+            if(text[offset]>=0xd800&&text[offset]<=0xdbff)offset++;
+            offset++;
+        }
+        return std::min(offset,text.size());
+    };
+    auto cell_width=[](std::wstring_view value){
+        int cells=0;
+        for(size_t i=0;i<value.size();i++){
+            wchar_t ch=value[i];
+            if(ch>=0xd800&&ch<=0xdbff&&i+1<value.size()){cells+=2;i++;continue;}
+            WORD type=0;
+            GetStringTypeW(CT_CTYPE3,&ch,1,&type);
+            if(type&(C3_NONSPACING|C3_DIACRITIC))continue;
+            cells+=(type&C3_FULLWIDTH)?2:1;
+        }
+        return cells;
+    };
     auto redraw=[&]{
+        const int available=std::max(1,terminal_columns()-cell_width(wide(prompt))-1);
+        size_t first=point;
+        int cells=0;
+        while(first){
+            size_t begin=previous(first);
+            int width=cell_width(std::wstring_view(text).substr(begin,first-begin));
+            if(cells+width>=available)break;
+            cells+=width;first=begin;
+        }
+        size_t last=point;
+        while(last<text.size()){
+            size_t end=next(last);
+            int width=cell_width(std::wstring_view(text).substr(last,end-last));
+            if(cells+width>available)break;
+            cells+=width;last=end;
+        }
         printf("\r\033[2K\033[?7l%s",prompt);
-        auto before=utf8(std::wstring_view(text).substr(0,point));
-        auto after=utf8(std::wstring_view(text).substr(point));
+        auto before=utf8(std::wstring_view(text).substr(first,point-first));
+        auto after=utf8(std::wstring_view(text).substr(point,last-point));
         fputs(before.c_str(),stdout);
         fputs("\0337",stdout);
         fputs(after.c_str(),stdout);
@@ -125,18 +165,6 @@ char *editable_input(const char *prompt,const char *fallback,bool secret,const s
             if(draft){draft->text.clear();draft->cursor=0;}
             return _strdup(line.empty()&&fallback?fallback:line.c_str());
         }
-        auto previous=[&](size_t offset){
-            if(offset)offset--;
-            if(offset&&text[offset]>=0xdc00&&text[offset]<=0xdfff)offset--;
-            return offset;
-        };
-        auto next=[&](size_t offset){
-            if(offset<text.size()){
-                if(text[offset]>=0xd800&&text[offset]<=0xdbff)offset++;
-                offset++;
-            }
-            return std::min(offset,text.size());
-        };
         if(key.wVirtualKeyCode==VK_LEFT)point=previous(point);
         else if(key.wVirtualKeyCode==VK_RIGHT)point=next(point);
         else if(key.wVirtualKeyCode==VK_HOME)point=0;
