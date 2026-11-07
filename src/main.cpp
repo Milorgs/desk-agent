@@ -325,7 +325,7 @@ static int arrow_menu(Tasks &jobs,const std::vector<std::string> &items){
                         printf("\033[2K%s%s %zu. %s\n",i==selected?"❯ ":"  ",i==selected?"\033[1;94m":"",i+1,items[i].c_str());
                         if(i==selected)fputs("\033[0m",stdout);
                     }
-                    printf("\033[2K  %s\n",tr("↑/↓ 选择 · Enter 确认 · Ctrl+D 返回"));fflush(stdout);
+                    fflush(stdout);
                 };draw();
                 for(;;){unsigned char key=0;if(read(STDIN_FILENO,&key,1)!=1){selected=items.size();break;}
                     if(key=='\r'||key=='\n')break;
