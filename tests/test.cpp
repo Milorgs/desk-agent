@@ -9,6 +9,7 @@
 #include <pty.h>
 #include <termios.h>
 #include <algorithm>
+#include <filesystem>
 #include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -1858,6 +1859,11 @@ int main(int argc,char **argv){
     test_numeric_settings();
     test_settings_redraw();
     curl_global_cleanup();
+    // Keep the sandbox after a failure for inspection; a passing run cleans up
+    // so repeated runs do not pile up /tmp/desk-c-test-* directories.
+    std::error_code removed;
+    std::filesystem::remove_all(sandbox,removed);
+    if(removed)fprintf(stderr,"warning: cannot remove %s: %s\n",sandbox,removed.message().c_str());
     printf("PASS: %d assertions; file/search/edit/config/process/context/recovery/OpenAI/Anthropic/menu/parallel/resume/approval/locks integration.\n",checks);
     return 0;
 }
