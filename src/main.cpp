@@ -83,7 +83,7 @@ public:
     }
 };
 static void status(App *a){
-    printf(tr("\n  desk-agent %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
+    printf(tr("\n  desk code %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n"),VERSION,sget(a->config,"model"),sget(a->config,"protocol"),a->root,permission_name(*a));
     printf(tr("  推理模式：%s\n"),reasoning_name(sget(a->config,"reasoning_effort")));
 }
 static char *field(const char *name,const char *fallback,bool secret){
@@ -787,7 +787,7 @@ static void show_banner(){
     const bool color=terminal_supports_color();
     const char *reset=color?"\033[0m":"";
     if(terminal_columns()<=banner_width){
-        printf("\n  %sdesk-agent%s  v%s\n\n",color?"\033[3;94m":"",reset,VERSION);
+        printf("\n  %sdesk code%s  v%s\n\n",color?"\033[3;94m":"",reset,VERSION);
         return;
     }
     constexpr const char *logo[]={
@@ -1018,6 +1018,7 @@ static int run_cli(int argc,char **argv){
         }
         else task=arg;
     }
+    if(task&&!strcmp(task,"code"))task=nullptr;
     if(!canonical_directory(workspace,a.root)){
         fputs(tr("工作目录不存在。\n"),stderr);
         rc=1;

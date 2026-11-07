@@ -1,10 +1,10 @@
-# desk-agent
+# desk code
 
 ## 我做了什么 / What I built
 
-我做了 `desk-agent`，一个用数字菜单操作的 CLI AI 助手。我用它编辑本地文件、执行终端任务、操作桌面应用，也可以同时运行多个对话。
+我做了 `desk code`，一个用终端操作的 CLI AI 助手。我用它编辑本地文件、执行终端任务、操作桌面应用，也可以同时运行多个对话。
 
-I built `desk-agent`, a numbered-menu CLI AI assistant. I use it to edit local files, run terminal tasks, control desktop applications, and keep multiple conversations running at the same time.
+I built `desk code`, a terminal AI assistant. I use it to edit local files, run terminal tasks, control desktop applications, and keep multiple conversations running at the same time.
 
 支持 Linux x86_64 和 Windows 10/11 x64。模型接口支持 OpenAI 兼容接口和 Anthropic 原生接口，也支持导入 MCP 工具。
 

@@ -229,7 +229,7 @@ constexpr Translation catalog[]={
     {"资源等待已取消。","Resource wait cancelled."},
     {"用户拒绝执行，不要绕过。","The user declined execution. Do not bypass the refusal."},
     {"用户拒绝桌面操作，不要绕过。","The user declined the desktop action. Do not bypass the refusal."},
-    {"\n  desk-agent %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n","\n  desk-agent %s\n  Model: %s\n  API: %s\n  Workspace: %s\n  Approval: %s\n"},
+    {"\n  desk code %s\n  当前模型：%s\n  接口：%s\n  工作目录：%s\n  批准模式：%s\n","\n  desk code %s\n  Model: %s\n  API: %s\n  Workspace: %s\n  Approval: %s\n"},
     {"开启","On"},
     {"关闭","Off"},
     {"自动批准","Auto-approve"},
