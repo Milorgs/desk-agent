@@ -587,10 +587,46 @@ public:
     }
 };
 #endif
+static std::string mcp_paste(Tasks &jobs){
+    menu_text(tr("粘贴完整 JSON 后按回车，支持多行。输入空行取消。"));
+    std::string text;
+    for(;;){
+        auto line=request_text(jobs,text.empty()?"JSON › ":"… ");
+        if(line.empty()||input_closed||interrupted)return {};
+        if(text.size()+line.size()+1>256000){
+            menu_text(tr("MCP 配置不能超过 256 KB。"));
+            return {};
+        }
+        text+=line;
+        text+='\n';
+        json_tokener *parser=json_tokener_new();
+        json_tokener_set_flags(parser,JSON_TOKENER_STRICT);
+        JsonPtr parsed(json_tokener_parse_ex(parser,text.data(),static_cast<int>(text.size())));
+        auto error=json_tokener_get_error(parser);
+        json_tokener_free(parser);
+        if(error!=json_tokener_continue)return text;
+    }
+}
+static void mcp_template(App *app,Tasks &jobs){
+    const char *example="{\n  \"mcpServers\": {\n    \"my-server\": {\n      \"url\": \"https://example.com/mcp\"\n    }\n  }\n}\n";
+    puts(example);
+    menu_text(tr("替换服务名称和地址即可使用。留空返回，输入路径可保存示例文件。"));
+    auto path=request_text(jobs,tr("保存路径："));
+    if(path.empty())return;
+    auto target=fs_path(path);
+    if(target.is_relative())target=fs_path(app->root)/target;
+    std::error_code error;
+    bool exists=fs::exists(target,error);
+    if(error){set_notice(tr("无法检查保存路径。"));return;}
+    if(exists&&menu_choices(jobs,tr("文件已存在，是否替换？\n  [1] 替换\n  [0] 取消"),nullptr,0)!=1)return;
+    if(atomic_file(path_text(target).c_str(),example,strlen(example),0600)){
+        set_notice(tr("示例保存失败，请检查目录是否存在及是否可写。"));
+    }else set_notice(tr("示例已保存，修改后可从 MCP 菜单导入。"));
+}
 static void mcp_menu(App *a,Tasks &jobs){
     std::string notice;
     for(;;){
-        clear_page();menu_text(tr("\nMCP 服务"));
+        clear_page();menu_text(tr("\nMCP 服务"));show_notice();
         if(!notice.empty()){puts(notice.c_str());notice.clear();}
         JsonPtr servers(mcp_load(*a));
         if(!servers){fprintf(stderr,"%s\n",a->error);return;}
@@ -602,11 +638,14 @@ static void mcp_menu(App *a,Tasks &jobs){
         int count=static_cast<int>(names.size());
         options.emplace_back(tr("导入 JSON 配置文件"));
         options.emplace_back(tr("添加远程 MCP 地址"));
+        options.emplace_back(tr("粘贴 JSON 配置"));
+        options.emplace_back(tr("查看或保存 JSON 示例"));
         options.emplace_back(tr("返回"));
         int choice=arrow_menu(jobs,options);if(choice<=0)return;
         a->error[0]=0;
         if(choice==count+1){
             std::string path=request_text(jobs,tr("配置文件路径（空行取消）："));if(path.empty())continue;
+            if(path.size()>=2&&((path.front()=='"'&&path.back()=='"')||(path.front()=='\''&&path.back()=='\'')))path=path.substr(1,path.size()-2);
             if(path.starts_with("~/")){const char *home=env_value("HOME");if(home)path=std::string(home)+path.substr(1);}
             auto file=fs_path(path);if(file.is_relative())file=fs_path(a->root)/file;
             notice=mcp_import(*a,path_text(file).c_str())?tr("MCP 配置已导入，下一条需求生效。"):a->error;
@@ -620,6 +659,11 @@ static void mcp_menu(App *a,Tasks &jobs){
             if(*token){J *headers=obj();put(headers,"Authorization",str((std::string("Bearer ")+token.get()).c_str()));put(entry.get(),"headers",headers);}
             put(servers.get(),name.c_str(),entry.release());
             notice=mcp_save(*a,servers.get())?tr("MCP 配置已导入，下一条需求生效。"):a->error;
+        }else if(choice==count+3){
+            auto text=mcp_paste(jobs);
+            if(!text.empty())notice=mcp_import_json(*a,text)?tr("MCP 配置已导入，下一条需求生效。"):a->error;
+        }else if(choice==count+4){
+            mcp_template(a,jobs);
         }else{
             const std::string name=names[static_cast<size_t>(choice-1)];J *entry=get(servers.get(),name.c_str());
             clear_page();printf("\n  MCP · %s\n",name.c_str());

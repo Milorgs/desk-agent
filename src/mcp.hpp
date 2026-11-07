@@ -4,6 +4,7 @@
 J *mcp_load(App &app);
 bool mcp_save(App &app,J *servers);
 bool mcp_import(App &app,const char *path);
+bool mcp_import_json(App &app,const std::string &text);
 bool mcp_prepare(App &app,bool explicit_test=false,const char *only=nullptr);
 J *mcp_tools(App &app);
 void mcp_append_tools(App &app,J *tools);

@@ -25,11 +25,21 @@ JsonPtr parsed(const std::string &text){
     json_tokener *parser=json_tokener_new();
     json_tokener_set_flags(parser,JSON_TOKENER_STRICT);
     J *value=json_tokener_parse_ex(parser,text.c_str(),static_cast<int>(text.size()+1));
-    bool ok=json_tokener_get_error(parser)==json_tokener_success;
+    auto parse_error=json_tokener_get_error(parser);
+    bool ok=parse_error==json_tokener_success;
     size_t end=json_tokener_get_parse_end(parser);json_tokener_free(parser);
     for(size_t i=end;i<text.size();i++)if(!isspace(static_cast<unsigned char>(text[i])))ok=false;
     JsonPtr result(value);
-    if(!ok||!json_object_is_type(value,json_type_object))throw Failure("MCP requires a valid JSON object.");
+    if(!ok){
+        size_t row=1,column=1;
+        for(size_t i=0;i<std::min(end,text.size());i++){
+            if(text[i]=='\n'){row++;column=1;}else column++;
+        }
+        char message[256];
+        snprintf(message,sizeof message,tr("JSON 格式错误（第 %zu 行，第 %zu 字节）：%s"),row,column,parse_error==json_tokener_success?tr("JSON 后有多余内容"):json_tokener_error_desc(parse_error));
+        throw Failure(message);
+    }
+    if(!json_object_is_type(value,json_type_object))throw Failure(tr("MCP JSON 顶层必须是对象。"));
     return result;
 }
 bool string_value(J *value,bool empty=false){
@@ -349,18 +359,28 @@ bool mcp_save(App &app,J *servers){
         mcp_close(app);return true;
     }catch(const std::exception &error){seterr(&app,error.what());return false;}
 }
-bool mcp_import(App &app,const char *path){
-    std::unique_ptr<char,decltype(&free)> bytes(read_bytes(path,config_limit,nullptr),free);
-    if(!bytes){seterr(&app,"Could not read the MCP JSON file (maximum 256 KB).");return false;}
+bool mcp_import_json(App &app,const std::string &text){
+    if(text.size()>config_limit){seterr(&app,tr("MCP 配置不能超过 256 KB。"));return false;}
     try{
-        auto document=parsed(bytes.get());J *servers=get(document.get(),"mcpServers");validate(servers);
-        JsonPtr existing(mcp_load(app));if(!existing)return false;
+        auto document=parsed(text);
+        J *servers=get(document.get(),"mcpServers");
+        if(!servers)throw Failure(tr("缺少 mcpServers 对象，请参考 MCP 配置示例。"));
+        validate(servers);
+        if(!json_object_object_length(servers))throw Failure(tr("mcpServers 为空，没有可导入的服务。"));
+        JsonPtr existing(mcp_load(app));
+        if(!existing)return false;
         json_object_object_foreach(servers,name,entry){
-            if(get(existing.get(),name))throw Failure("An MCP server with this name already exists. Remove it or rename the imported entry first.");
+            if(get(existing.get(),name))throw Failure(tr("服务名称重复，请修改 JSON 中的服务名称后重试。"));
             put(existing.get(),name,copy(entry));
         }
         return mcp_save(app,existing.get());
     }catch(const std::exception &error){seterr(&app,error.what());return false;}
+}
+bool mcp_import(App &app,const char *path){
+    size_t length=0;
+    std::unique_ptr<char,decltype(&free)> bytes(read_bytes(path,config_limit,&length),free);
+    if(!bytes){seterr(&app,tr("无法读取 MCP JSON 文件，请检查文件路径和权限（最大 256 KB）。"));return false;}
+    return mcp_import_json(app,std::string(bytes.get(),length));
 }
 void mcp_close(App &app){delete static_cast<Registry *>(app.mcp_data);app.mcp_data=nullptr;}
 bool mcp_prepare(App &app,bool explicit_test,const char *only){

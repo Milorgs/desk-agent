@@ -70,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.answer(200,{'choices':[{'message':msg,'finish_reason':'stop' if has_result else 'tool_calls'}]})
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
-for native in (False,True):
+for native,source in ((False,'file'),(True,'url'),(False,'paste')):
     with tempfile.TemporaryDirectory() as root:
         config=Path(root)/'import.json';config.write_text(json.dumps({'mcpServers':{'remote':{'url':f'http://127.0.0.1:{server.server_port}/mcp','headers':{'Authorization':'Bearer mcp-test-secret'}}}}))
         pid,fd=pty.fork()
@@ -103,11 +103,19 @@ for native in (False,True):
                 assert b'Select a number:' not in page
                 send('\n')
             until('2. Add remote MCP URL')
-            if native:
+            if source=='url':
                 send('\x1b[B');until('❯ 2. Add remote MCP URL');send('\n');until('Server name');send('remote\n');until('MCP URL');send(f'http://127.0.0.1:{server.server_port}/mcp\n');until('Bearer token');send('mcp-test-secret\n')
+            elif source=='paste':
+                send('4\n');until('Save path:')
+                sample=Path(root)/'MCP example.json'
+                send(str(sample)+'\n');until('Example saved.')
+                assert json.loads(sample.read_text())['mcpServers']['my-server']['url']=='https://example.com/mcp'
+                send('3\n');until('JSON › ')
+                send('\x1b[200~'+json.dumps(json.loads(config.read_text()),indent=2)+'\x1b[201~\n')
             else:
-                send('\n');until('Configuration file path');send(str(config)+'\n')
+                send('\n');until('Configuration file path');send('"'+str(config)+'"\n')
             until('MCP configuration imported.');until('1. remote')
+            import_end=len(output)
             send('1\n1\n');until('Connected. 2 tools available.')
             send('0\n0\n');until('❯ 1. Start chat')
             send('1\n1\nUse the MCP echo tool\n');until('MODEL_MCP_DONE')
@@ -119,11 +127,12 @@ for native in (False,True):
             deadline=time.monotonic()+8
             while read(): assert time.monotonic()<deadline
             _,status=os.waitpid(pid,0);pid=0;assert os.waitstatus_to_exitcode(status)==0
-            assert b'mcp-test-secret' not in output
-            print('PASS:', 'Anthropic / URL entry' if native else 'OpenAI / JSON import', 'MCP discovery, SSE ping, pagination, session auth, nested tool call, result, cleanup')
+            # Pasted JSON is echoed by the input editor. Subsequent output must not expose it.
+            assert b'mcp-test-secret' not in (output[import_end:] if source=='paste' else output)
+            print('PASS:', 'Anthropic / URL entry' if native else 'OpenAI / '+source, 'MCP discovery, SSE ping, pagination, session auth, nested tool call, result, cleanup')
         finally:
             if pid: os.kill(pid,signal.SIGKILL);os.waitpid(pid,0)
             os.close(fd)
 assert not state['errors'],state
-assert state['sessions']==4 and state['deletes']==4 and state['tools']==2 and state['models']==4 and state['pings']==4,state
+assert state['sessions']==6 and state['deletes']==6 and state['tools']==3 and state['models']==6 and state['pings']==6,state
 server.shutdown();print('PASS:',state)

@@ -1673,9 +1673,21 @@ static void test_mcp(){
     JsonPtr invalid(copy(servers.get()));put(get(invalid.get(),"fixture"),"disabled",str("false"));CHECK(!mcp_save(a,invalid.get()));
     JsonPtr loaded(mcp_load(a));CHECK(json_object_equal(loaded.get(),servers.get()));
     CHECK(!path_suffix(path,a.root,"/import.json"));const char *duplicate="{\"mcpServers\":{\"fixture\":{\"command\":\"bad\"}}}";CHECK(!atomic_file(path,duplicate,strlen(duplicate),0600));CHECK(!mcp_import(a,path));
+    JsonPtr before_import(mcp_load(a));
+    CHECK(!mcp_import_json(a,"{broken"));
+    CHECK(strstr(a.error,"JSON"));
+    CHECK(!mcp_import_json(a,"{}"));
+    CHECK(!mcp_import_json(a,"{\"mcpServers\":{}}"));
+    CHECK(!mcp_import_json(a,std::string(256001,'x')));
+    JsonPtr after_failed_import(mcp_load(a));
+    CHECK(json_object_equal(before_import.get(),after_failed_import.get()));
+    CHECK(mcp_import_json(a,"{\"mcpServers\":{\"pasted\":{\"url\":\"https://example.invalid/mcp\",\"disabled\":true}}}"));
+    CHECK(!mcp_import_json(a,"{\"mcpServers\":{\"pasted\":{\"url\":\"https://example.invalid/other\"}}}"));
+    JsonPtr after_duplicate(mcp_load(a));
+    CHECK(!strcmp(sget(get(after_duplicate.get(),"pasted"),"url"),"https://example.invalid/mcp"));
     const char *additional="{\"mcpServers\":{\"remote\":{\"url\":\"https://example.invalid/mcp\",\"disabled\":true}}}";
     CHECK(!atomic_file(path,additional,strlen(additional),0600));CHECK(mcp_import(a,path));
-    loaded.reset(mcp_load(a));CHECK(json_object_object_length(loaded.get())==2);
+    loaded.reset(mcp_load(a));CHECK(json_object_object_length(loaded.get())==3);
     setenv("MCP_TEST_SECRET","must-not-leak",1);CHECK(mcp_prepare(a));unsetenv("MCP_TEST_SECRET");
     JsonPtr tools(mcp_tools(a));CHECK(alen(tools.get())==2);std::string echo,fail;
     for(size_t i=0;i<alen(tools.get());i++){
